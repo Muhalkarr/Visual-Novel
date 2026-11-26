@@ -11,6 +11,7 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, onTabChange, onExport
   const navItems = [
     { id: 'sandbox', label: 'Simulator' },
     { id: 'generator', label: 'Generator' },
+    { id: 'production', label: 'Studio Produksi' },
     { id: 'benchmark', label: 'Impeller & FPS' },
     { id: 'ai-playbook', label: 'AI Studio' },
     { id: 'libraries', label: 'Libraries' },

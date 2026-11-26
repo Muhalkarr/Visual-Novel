@@ -3,9 +3,27 @@ import { Header } from './components/Header';
 import { SandboxCanvas } from './components/SandboxCanvas';
 import { CodeGenerator } from './components/CodeGenerator';
 import { BenchmarkComparison } from './components/BenchmarkComparison';
-import { AIStudioPlaybook } from './components/AIStudioPlaybook';
+import { AIStudioPlaybook, PlaybookSubTab } from './components/AIStudioPlaybook';
 import { LibraryEcosystem } from './components/LibraryEcosystem';
 import { GettingStartedProgress } from './components/GettingStartedProgress';
+import { FlutterToFlameRoadmap } from './components/FlutterToFlameRoadmap';
+import {
+  ProductionStudioWorkspace,
+  ProductionCategory,
+} from './components/ProductionStudioWorkspace';
+import {
+  CapturedReplaySession,
+  loadStoredReplaySessions,
+  saveStoredReplaySessions,
+} from './types/replaySession';
+import {
+  SaveDaoSchema,
+  WorldQuestSchema,
+  loadSaveDaoSchema,
+  loadWorldSchema,
+  saveSaveDaoSchema,
+  saveWorldSchema,
+} from './types/studioGameSchema';
 import { codeFiles } from './data/codeTemplates';
 import { 
   Gamepad2, 
@@ -25,12 +43,56 @@ import {
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('sandbox');
   const [targetedCodeFileId, setTargetedCodeFileId] = useState<string>('game_main');
+  const [playbookSubTab, setPlaybookSubTab] = useState<PlaybookSubTab>('persiapan');
+  const [productionCategory, setProductionCategory] = useState<ProductionCategory>('cutscene_replay');
+  const [replaySessions, setReplaySessions] = useState<CapturedReplaySession[]>(() =>
+    loadStoredReplaySessions()
+  );
+  const [activeReplaySessionId, setActiveReplaySessionId] = useState<string>(
+    () => loadStoredReplaySessions()[0]?.id || 'sample_corridor_stealth'
+  );
+  const [worldSchema, setWorldSchema] = useState<WorldQuestSchema>(() => loadWorldSchema());
+  const [saveSchema, setSaveSchema] = useState<SaveDaoSchema>(() => loadSaveDaoSchema());
   const [showExportModal, setShowExportModal] = useState<boolean>(false);
+
+  const handleUpdateWorldSchema = (next: WorldQuestSchema) => {
+    setWorldSchema(next);
+    saveWorldSchema(next);
+  };
+
+  const handleUpdateSaveSchema = (next: SaveDaoSchema) => {
+    setSaveSchema(next);
+    saveSaveDaoSchema(next);
+  };
+
+  const handleAddReplaySession = (session: CapturedReplaySession) => {
+    setReplaySessions((prev) => {
+      const next = [session, ...prev.slice(0, 7)];
+      saveStoredReplaySessions(next);
+      return next;
+    });
+    setActiveReplaySessionId(session.id);
+  };
 
   // Jump from sandbox or tips to specific code file
   const handleOpenCodeGenerator = (fileId: string) => {
     setTargetedCodeFileId(fileId);
     setActiveTab('generator');
+  };
+
+  // Navigate from Flutter-to-Flame Roadmap to specific tab & sub-tab
+  const handleRoadmapNavigate = (
+    tabId: string,
+    subTab?: string,
+    codeFileId?: string
+  ) => {
+    if (codeFileId) {
+      setTargetedCodeFileId(codeFileId);
+    }
+    if (subTab) {
+      setPlaybookSubTab(subTab as PlaybookSubTab);
+    }
+    setActiveTab(tabId);
   };
 
   // Download all files combined into a clean text archive or sequential download
@@ -145,6 +207,9 @@ export default function App() {
       {/* Getting Started Progress Bar ('Langkah Awal') */}
       <GettingStartedProgress onNavigateTab={(tab) => setActiveTab(tab)} />
 
+      {/* Interactive Pipeline Dashboard ('Roadmap Flutter-to-Flame') */}
+      <FlutterToFlameRoadmap onNavigateTab={handleRoadmapNavigate} />
+
       {/* Main Tab Navigation Toolbar (Sub-Nav) */}
       <div className="border-b border-[#1e2638] bg-[#0c1018] px-4 lg:px-8">
         <div className="max-w-7xl mx-auto flex items-center gap-2 overflow-x-auto py-2.5 scrollbar-none">
@@ -197,6 +262,18 @@ export default function App() {
           </button>
 
           <button
+            onClick={() => setActiveTab('production')}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors font-['Plus_Jakarta_Sans'] ${
+              activeTab === 'production'
+                ? 'bg-sky-500 text-slate-950 font-bold shadow-sm'
+                : 'text-slate-400 hover:text-white hover:bg-[#151c2b]'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>Studio Produksi</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('libraries')}
             className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors font-['Plus_Jakarta_Sans'] ${
               activeTab === 'libraries'
@@ -213,11 +290,38 @@ export default function App() {
       {/* Main View Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 lg:px-8 py-8">
         {activeTab === 'sandbox' && (
-          <SandboxCanvas onOpenCodeGenerator={handleOpenCodeGenerator} />
+          <SandboxCanvas
+            onOpenCodeGenerator={handleOpenCodeGenerator}
+            onSaveReplaySession={handleAddReplaySession}
+            onOpenReplayDebugger={() => {
+              setProductionCategory('cutscene_replay');
+              setActiveTab('production');
+            }}
+            worldSchema={worldSchema}
+            saveSchema={saveSchema}
+            onOpenStudioSchemas={() => {
+              setProductionCategory('world_save_hud');
+              setActiveTab('production');
+            }}
+          />
         )}
 
         {activeTab === 'generator' && (
           <CodeGenerator initialFileId={targetedCodeFileId} />
+        )}
+
+        {activeTab === 'production' && (
+          <ProductionStudioWorkspace
+            initialCategory={productionCategory}
+            replaySessions={replaySessions}
+            activeReplaySessionId={activeReplaySessionId}
+            onSelectReplaySession={setActiveReplaySessionId}
+            onImportReplaySession={handleAddReplaySession}
+            worldSchema={worldSchema}
+            onChangeWorldSchema={handleUpdateWorldSchema}
+            saveSchema={saveSchema}
+            onChangeSaveSchema={handleUpdateSaveSchema}
+          />
         )}
 
         {activeTab === 'benchmark' && (
@@ -225,7 +329,7 @@ export default function App() {
         )}
 
         {activeTab === 'ai-playbook' && (
-          <AIStudioPlaybook />
+          <AIStudioPlaybook initialSubTab={playbookSubTab} />
         )}
 
         {activeTab === 'libraries' && (
