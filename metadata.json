@@ -1,0 +1,6 @@
+{
+  "name": "Flame 2D Studio: Android Game Architecture & Logic Generator",
+  "description": "Arsitektur lengkap pengembangan game 2D Android performatif berbasis Flutter & Flame Engine, dilengkapi generator logika stealth simulation seperti game REC karya moondev, live simulation canvas, dan panduan AI Studio.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
