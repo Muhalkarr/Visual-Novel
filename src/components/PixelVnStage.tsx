@@ -1,20 +1,25 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  BatteryCharging,
   Calendar,
+  Camera,
   Coffee,
   Eye,
   Gift,
   Heart,
+  Home,
   Image as ImageIcon,
   MapPin,
   MessageSquare,
   Moon,
+  Music,
   ShieldAlert,
   Sliders,
   Sparkles,
   Sun,
   Sunrise,
   Sunset,
+  Users,
   Zap,
 } from 'lucide-react';
 import {
@@ -25,16 +30,25 @@ import {
 } from '../types/studioGameSchema';
 import { MiniGameMode } from '../engine/MiniGameModule';
 import {
+  CHIPTUNE_TRACKS,
+  ChiptuneTrackId,
+  RetroAudioController,
+  RetroAudioSnapshot,
+} from '../engine/RetroAudioController';
+import { VisualNovelPortraitManager } from '../engine/VisualNovelPortraitManager';
+import {
   RelationshipSnapshot,
   TimeSlotKey,
   VisualNovelRelationshipEngine,
 } from '../engine/VisualNovelRelationshipEngine';
 import { formatMinutesToHHMM } from './DayNightTimeSlider';
-import { PixelCharacterSprite, PixelSceneBackdrop } from './PixelVnSprites';
+import { PixelDialogueOverlay } from './PixelDialogueOverlay';
 
 interface PixelVnStageProps {
   relEngine: VisualNovelRelationshipEngine;
   relSnapshot: RelationshipSnapshot;
+  portraitManager?: VisualNovelPortraitManager;
+  audioController?: RetroAudioController;
   activeRoomId: string;
   slotKey: TimeSlotKey;
   studioPrefs: StudioModulePrefs;
@@ -42,8 +56,15 @@ interface PixelVnStageProps {
   show2dDebugDrawer: boolean;
   onSelectRoom: (roomId: string) => void;
   onLaunchMiniGame: (mode: MiniGameMode, charId: RomanceCharacterId) => void;
+  onOpenRelationshipDashboard: () => void;
+  onOpenHistoryLog: () => void;
+  onOpenWeekendCalendar: () => void;
   onOpenGiftShop: () => void;
   onOpenGallery: () => void;
+  onOpenCgMemoryGallery?: () => void;
+  onOpenChiptuneMixer?: () => void;
+  onOpenCampusLifeHub?: () => void;
+  onOpenNightCameraHub?: () => void;
   onOpenStudioSettings: () => void;
   onToggle2dDebugDrawer: () => void;
   onSwitchToStealth: () => void;
@@ -54,6 +75,8 @@ interface PixelVnStageProps {
 export const PixelVnStage: React.FC<PixelVnStageProps> = ({
   relEngine,
   relSnapshot,
+  portraitManager: externalPortraitManager,
+  audioController,
   activeRoomId,
   slotKey,
   studioPrefs,
@@ -61,8 +84,15 @@ export const PixelVnStage: React.FC<PixelVnStageProps> = ({
   show2dDebugDrawer,
   onSelectRoom,
   onLaunchMiniGame,
+  onOpenRelationshipDashboard,
+  onOpenHistoryLog,
+  onOpenWeekendCalendar,
   onOpenGiftShop,
   onOpenGallery,
+  onOpenCgMemoryGallery,
+  onOpenChiptuneMixer,
+  onOpenCampusLifeHub,
+  onOpenNightCameraHub,
   onOpenStudioSettings,
   onToggle2dDebugDrawer,
   onSwitchToStealth,
@@ -70,20 +100,45 @@ export const PixelVnStage: React.FC<PixelVnStageProps> = ({
   onSnapMemoryPhoto,
 }) => {
   const { progress, dayLabel, activeNode } = relSnapshot;
-  const [typedText, setTypedText] = useState('');
-  const [isTypingDone, setIsTypingDone] = useState(false);
-  const [focusedChoiceIdx, setFocusedChoiceIdx] = useState(0);
-  const [editingName, setEditingName] = useState(false);
-  const [draftName, setDraftName] = useState(progress.playerName || 'Nita');
   const [showScheduleDrawer, setShowScheduleDrawer] = useState(false);
+  const [audioSnap, setAudioSnap] = useState<RetroAudioSnapshot>(() =>
+    audioController
+      ? audioController.getSnapshot()
+      : {
+          bgmPlaying: false,
+          currentTrackId: 'campus_morning',
+          currentTrackTitle: CHIPTUNE_TRACKS.campus_morning.title,
+          playlistIndex: 0,
+          playlistLength: 5,
+          playlistAutoAdvance: true,
+          crossfading: false,
+          muted: false,
+          bgmVolume: 0.75,
+          sfxVolume: 0.8,
+          masterVolume: 0.75,
+        }
+  );
+
+  useEffect(() => {
+    if (!audioController) return;
+    return audioController.subscribe(setAudioSnap);
+  }, [audioController]);
+
+  // Cross-fade chiptune BGM track automatically when campus room or time slot shifts
+  useEffect(() => {
+    audioController?.syncTrackToContext(activeRoomId, slotKey);
+  }, [audioController, activeRoomId, slotKey]);
+
+  const fallbackPortraitManager = useMemo(
+    () => (externalPortraitManager ? null : new VisualNovelPortraitManager(true)),
+    [externalPortraitManager]
+  );
+  const portraitManager = externalPortraitManager ?? fallbackPortraitManager!;
 
   const scheduledCharsInRoom = ROMANCE_CHARACTERS.filter(
     (c) => c.schedule[slotKey].roomId === activeRoomId
   );
 
-  // Determine idle ambient text if no dialogue node is currently active
-  const activeRoomName =
-    ROMANCE_CAMPUS_SCHEMA.rooms.find((r) => r.id === activeRoomId)?.name ?? activeRoomId;
   const slotLabelId =
     slotKey === 'morning'
       ? 'Pagi'
@@ -93,72 +148,12 @@ export const PixelVnStage: React.FC<PixelVnStageProps> = ({
           ? 'Senja'
           : 'Malam';
 
-  const displayNodeText = activeNode
-    ? activeNode.text
-    : scheduledCharsInRoom.length > 0
-      ? `${scheduledCharsInRoom.map((c) => c.name).join(' & ')} sedang berada di ${activeRoomName} (${slotLabelId}). Klik karakter untuk memulai rute dialog!`
-      : `Tidak ada karakter di ${activeRoomName} pada waktu ${slotLabelId}. Pindah lokasi kampus atau cek Jadwal 24 Jam.`;
-
-  useEffect(() => {
-    setTypedText('');
-    setIsTypingDone(false);
-    setFocusedChoiceIdx(0);
-    setEditingName(false);
-
-    let idx = 0;
-    const speed = progress.autoSkip ? 8 : 16;
-    const timer = setInterval(() => {
-      idx++;
-      if (idx <= displayNodeText.length) {
-        setTypedText(displayNodeText.slice(0, idx));
-      } else {
-        setIsTypingDone(true);
-        clearInterval(timer);
-      }
-    }, speed);
-    return () => clearInterval(timer);
-  }, [displayNodeText, progress.autoSkip]);
-
-  // Auto-skip linear dialogue lines when enabled
-  useEffect(() => {
-    if (!progress.autoSkip || !isTypingDone || !activeNode) return;
-    if (activeNode.choices && activeNode.choices.length > 0) return;
-    const t = setTimeout(() => {
-      relEngine.advanceOrClose();
-    }, 1800);
-    return () => clearTimeout(t);
-  }, [progress.autoSkip, isTypingDone, activeNode, relEngine]);
-
-  const handleBoxClick = () => {
-    if (!isTypingDone) {
-      setTypedText(displayNodeText);
-      setIsTypingDone(true);
-      return;
-    }
-    if (activeNode && (!activeNode.choices || activeNode.choices.length === 0)) {
-      relEngine.advanceOrClose();
-    }
-  };
-
   const renderTimeIcon = () => {
     if (slotKey === 'morning') return <Sunrise className="w-5 h-5 text-amber-300 shrink-0" />;
     if (slotKey === 'afternoon') return <Sun className="w-5 h-5 text-amber-300 shrink-0" />;
     if (slotKey === 'evening') return <Sunset className="w-5 h-5 text-orange-400 shrink-0" />;
     return <Moon className="w-5 h-5 text-sky-300 shrink-0" />;
   };
-
-  const activeSprites = activeNode
-    ? activeNode.sprites
-    : scheduledCharsInRoom.slice(0, 2).map((c, idx) => ({
-        characterId: c.id,
-        expression: (progress.affectionMap[c.id] ?? 0) >= 65 ? ('senyum' as const) : ('netral' as const),
-        position:
-          scheduledCharsInRoom.length > 1
-            ? idx === 0
-              ? ('left' as const)
-              : ('right' as const)
-            : ('right' as const),
-      }));
 
   const primaryCharForMiniGame: RomanceCharacterId =
     activeNode?.speakerId ??
@@ -170,16 +165,21 @@ export const PixelVnStage: React.FC<PixelVnStageProps> = ({
       {/* Top Pixel HUD Bar */}
       <div className="flex flex-wrap items-center justify-between gap-2 pr-3 pt-2 pb-1.5">
         <div className="flex items-center gap-4">
-          {/* Slanted MON. Day Ribbon */}
-          <div className="bg-[#232030] border-y-2 border-r-2 border-[#3e3a4d] pixel-ribbon-clip pl-3.5 pr-7 py-1.5 flex items-center gap-2.5 shadow-md">
+          {/* Clickable Slanted MON. Day Ribbon -> Opens Weekend Calendar */}
+          <button
+            type="button"
+            onClick={onOpenWeekendCalendar}
+            title="Buka Kalender Kampus & Event Akhir Pekan"
+            className="bg-[#232030] hover:bg-[#2d293e] border-y-2 border-r-2 border-[#3e3a4d] hover:border-amber-400 pixel-ribbon-clip pl-3.5 pr-7 py-1.5 flex items-center gap-2.5 shadow-md transition-colors cursor-pointer"
+          >
             {renderTimeIcon()}
             <span className="font-pixel text-base text-white tracking-wider">
               {dayLabel}
             </span>
-          </div>
+          </button>
 
-          {/* Stamina ⚡100/100 & Coins ¢0 */}
-          <div className="flex items-center gap-4 font-pixel text-sm tabular-nums">
+          {/* Stamina ⚡100/100, Coins ¢, Rent Countdown, INT/DEX/CHM & DSLR */}
+          <div className="flex flex-wrap items-center gap-3 font-pixel text-sm tabular-nums">
             <span className="inline-flex items-center gap-1 text-white" title="Stamina Harian">
               <Zap className="w-4 h-4 text-amber-400 fill-amber-400" />
               <span>{progress.stamina}/100</span>
@@ -187,6 +187,43 @@ export const PixelVnStage: React.FC<PixelVnStageProps> = ({
             <span className="inline-flex items-center gap-0.5 text-white" title="Koin Saku">
               <span className="text-amber-400 font-bold">¢</span>
               <span>{progress.allowanceCoins}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                audioController?.playMenuSelect('confirm');
+                onOpenCampusLifeHub?.();
+              }}
+              title="Klik untuk bayar sewa kamar & kelola stat mahasiswa"
+              className={`inline-flex items-center gap-1 px-2 py-0.5 border text-[11px] font-mono transition-colors ${
+                progress.rentState.overdue
+                  ? 'bg-rose-950/70 border-rose-400 text-rose-200'
+                  : 'bg-[#1b1924] border-[#3e3a4d] hover:border-amber-400 text-amber-200'
+              }`}
+            >
+              <span>
+                Sewa ¢{progress.rentState.rentAmount} ·{' '}
+                {progress.rentState.overdue
+                  ? 'TELAT!'
+                  : `${Math.max(0, progress.rentState.dueDayCount - progress.dayCount)}h`}
+              </span>
+            </button>
+            <span
+              className="hidden md:inline-flex items-center gap-1.5 text-[10px] font-mono text-sky-200 bg-[#181622] border border-[#322e42] px-2 py-0.5"
+              title="Intelligence / Dexterity / Charm"
+            >
+              <span>INT {progress.studentStats.intelligence}</span>
+              <span className="text-slate-500">·</span>
+              <span>DEX {progress.studentStats.dexterity}</span>
+              <span className="text-slate-500">·</span>
+              <span>CHM {progress.studentStats.charm}</span>
+            </span>
+            <span
+              className="hidden lg:inline-flex items-center gap-1 text-[10px] font-mono text-emerald-300 bg-[#181622] border border-[#322e42] px-2 py-0.5"
+              title="Daya Baterai DSLR"
+            >
+              <BatteryCharging className="w-3 h-3" />
+              {progress.cameraGear.currentBattery}%
             </span>
             <span className="hidden sm:inline text-xs font-mono text-amber-300/90">
               {formatMinutesToHHMM(studioPrefs.timeMinutes)} · {slotLabelId}
@@ -196,25 +233,98 @@ export const PixelVnStage: React.FC<PixelVnStageProps> = ({
 
         {/* Compact Pixel Utility Controls */}
         <div className="flex flex-wrap items-center gap-1.5 pl-3 sm:pl-0">
+          {onOpenCampusLifeHub && (
+            <button
+              type="button"
+              onClick={() => {
+                audioController?.playMenuSelect('confirm');
+                onOpenCampusLifeHub();
+              }}
+              className="inline-flex items-center gap-1 px-2.5 py-1 bg-[#232032] hover:bg-[#2f2b42] border border-amber-400/70 hover:border-amber-300 text-[11px] font-pixel text-amber-200 whitespace-nowrap"
+            >
+              <Home className="w-3 h-3 text-amber-400" />
+              Kampus &amp; Toko
+            </button>
+          )}
+          {onOpenNightCameraHub && (
+            <button
+              type="button"
+              onClick={() => {
+                audioController?.playMenuSelect('confirm');
+                onOpenNightCameraHub();
+              }}
+              className="inline-flex items-center gap-1 px-2.5 py-1 bg-[#232032] hover:bg-[#2f2b42] border border-sky-400/70 hover:border-sky-300 text-[11px] font-pixel text-sky-200 whitespace-nowrap"
+            >
+              <Camera className="w-3 h-3 text-sky-400" />
+              REC Kamera
+              {progress.capturedMediaQueue.filter((m) => !m.uploaded).length > 0 && (
+                <span className="ml-0.5 px-1 bg-sky-500 text-slate-950 text-[9px] font-mono font-bold">
+                  {progress.capturedMediaQueue.filter((m) => !m.uploaded).length}
+                </span>
+              )}
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => onLaunchMiniGame('chat_quiz', primaryCharForMiniGame)}
-            className="inline-flex items-center gap-1 px-2.5 py-1 bg-[#1b1924] hover:bg-[#2a2638] border border-[#3e3a4d] hover:border-amber-400 text-[11px] font-mono text-amber-200 whitespace-nowrap"
+            onClick={() => {
+              audioController?.playMenuSelect('confirm');
+              onOpenRelationshipDashboard();
+            }}
+            className="inline-flex items-center gap-1 px-2.5 py-1 bg-[#232032] hover:bg-[#2f2b42] border border-rose-400/70 hover:border-rose-300 text-[11px] font-pixel text-rose-200 whitespace-nowrap"
+          >
+            <Users className="w-3 h-3 text-rose-400" />
+            Hubungan
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              audioController?.playMenuSelect('confirm');
+              onOpenHistoryLog();
+            }}
+            className="inline-flex items-center gap-1 px-2 py-1 bg-[#1b1924] hover:bg-[#2a2638] border border-[#3e3a4d] hover:border-amber-400 text-[11px] font-mono text-amber-200 whitespace-nowrap"
+          >
+            <Sparkles className="w-3 h-3 text-amber-300" />
+            Jurnal
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              audioController?.playMenuSelect('confirm');
+              onOpenWeekendCalendar();
+            }}
+            className="inline-flex items-center gap-1 px-2 py-1 bg-[#1b1924] hover:bg-[#2a2638] border border-[#3e3a4d] hover:border-amber-400 text-[11px] font-mono text-amber-200 whitespace-nowrap"
+          >
+            <Calendar className="w-3 h-3 text-amber-300" />
+            Kalender
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              audioController?.playMenuSelect('confirm');
+              onLaunchMiniGame('chat_quiz', primaryCharForMiniGame);
+            }}
+            className="inline-flex items-center gap-1 px-2 py-1 bg-[#1b1924] hover:bg-[#2a2638] border border-[#3e3a4d] hover:border-amber-400 text-[11px] font-mono text-amber-200 whitespace-nowrap"
           >
             <MessageSquare className="w-3 h-3 text-amber-400" />
             Chat Quiz
           </button>
           <button
             type="button"
-            onClick={() => onLaunchMiniGame('cafe_memory', primaryCharForMiniGame)}
-            className="inline-flex items-center gap-1 px-2.5 py-1 bg-[#1b1924] hover:bg-[#2a2638] border border-[#3e3a4d] hover:border-amber-400 text-[11px] font-mono text-emerald-200 whitespace-nowrap"
+            onClick={() => {
+              audioController?.playMenuSelect('confirm');
+              onLaunchMiniGame('cafe_memory', primaryCharForMiniGame);
+            }}
+            className="inline-flex items-center gap-1 px-2 py-1 bg-[#1b1924] hover:bg-[#2a2638] border border-[#3e3a4d] hover:border-amber-400 text-[11px] font-mono text-emerald-200 whitespace-nowrap"
           >
             <Coffee className="w-3 h-3 text-emerald-400" />
             Cafe Memory
           </button>
           <button
             type="button"
-            onClick={onOpenGiftShop}
+            onClick={() => {
+              audioController?.playMenuSelect('confirm');
+              onOpenGiftShop();
+            }}
             className="inline-flex items-center gap-1 px-2 py-1 bg-[#1b1924] hover:bg-[#2a2638] border border-[#3e3a4d] text-[11px] font-mono text-rose-200 whitespace-nowrap"
           >
             <Gift className="w-3 h-3 text-rose-400" />
@@ -222,24 +332,115 @@ export const PixelVnStage: React.FC<PixelVnStageProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => setShowScheduleDrawer((v) => !v)}
+            onClick={() => {
+              audioController?.playMenuSelect('confirm');
+              setShowScheduleDrawer((v) => !v);
+            }}
             className={`inline-flex items-center gap-1 px-2 py-1 border text-[11px] font-mono whitespace-nowrap ${
               showScheduleDrawer
                 ? 'bg-amber-500/20 border-amber-400 text-amber-200'
                 : 'bg-[#1b1924] border-[#3e3a4d] text-slate-200'
             }`}
           >
-            <Calendar className="w-3 h-3 text-amber-300" />
+            <Calendar className="w-3 h-3 text-sky-300" />
             Jadwal
           </button>
           <button
             type="button"
-            onClick={onOpenGallery}
-            className="inline-flex items-center gap-1 px-2 py-1 bg-[#1b1924] border border-[#3e3a4d] text-[11px] font-mono text-purple-200 whitespace-nowrap"
+            onClick={() => {
+              audioController?.playMenuSelect('confirm');
+              onOpenGallery();
+            }}
+            className="inline-flex items-center gap-1 px-2 py-1 bg-[#1b1924] border border-[#3e3a4d] hover:border-purple-400 text-[11px] font-mono text-purple-200 whitespace-nowrap"
           >
             <ImageIcon className="w-3 h-3 text-purple-400" />
-            CG ({photoCount})
+            Galeri ({progress.unlockedEndings.length}/{ROMANCE_CHARACTERS.length} · {photoCount})
           </button>
+          {onOpenCgMemoryGallery && (
+            <button
+              type="button"
+              onClick={() => {
+                audioController?.playMenuSelect('confirm');
+                onOpenCgMemoryGallery();
+              }}
+              className="inline-flex items-center gap-1 px-2 py-1 bg-[#1b1924] border border-[#3e3a4d] hover:border-amber-400 text-[11px] font-mono text-amber-200 whitespace-nowrap"
+            >
+              <Sparkles className="w-3 h-3 text-amber-300" />
+              CG Grid
+            </button>
+          )}
+          {audioController && (
+            <div className="inline-flex items-center border border-[#3e3a4d] bg-[#1b1924]">
+              <button
+                type="button"
+                onClick={() => {
+                  audioController.playMenuSelect('confirm');
+                  audioController.toggleBgm();
+                }}
+                className={`inline-flex items-center gap-1 px-2 py-1 text-[11px] font-mono whitespace-nowrap ${
+                  audioSnap.bgmPlaying
+                    ? 'bg-emerald-500/20 text-emerald-200'
+                    : 'text-slate-300'
+                }`}
+                title="Toggle Retro Chiptune Playlist"
+              >
+                <Music className="w-3 h-3 text-emerald-400" />
+                {audioSnap.bgmPlaying
+                  ? audioSnap.crossfading
+                    ? 'Fading...'
+                    : 'BGM ON'
+                  : 'BGM'}
+              </button>
+              <select
+                aria-label="Pilih Track Chiptune BGM"
+                value={audioSnap.currentTrackId}
+                onChange={(e) => {
+                  audioController.playMenuSelect('confirm');
+                  const nextId = e.target.value as ChiptuneTrackId;
+                  if (!audioSnap.bgmPlaying) {
+                    audioController.startBgm(nextId);
+                  } else {
+                    audioController.crossfadeTo(nextId, 1.2);
+                  }
+                }}
+                className="bg-[#09080c] border-l border-[#3e3a4d] px-1.5 py-1 text-[10px] font-mono text-emerald-200 focus:outline-none"
+              >
+                {audioController.getAvailableTracks().map((tr) => (
+                  <option key={tr.id} value={tr.id}>
+                    {tr.title}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => {
+                  audioController.playMenuSelect('hover');
+                  if (!audioSnap.bgmPlaying) {
+                    audioController.startBgm();
+                  } else {
+                    audioController.nextTrack(1.2);
+                  }
+                }}
+                title="Crossfade ke track berikutnya dalam playlist"
+                className="border-l border-[#3e3a4d] px-1.5 py-1 text-[10px] font-mono text-amber-200 hover:bg-[#2a2638]"
+              >
+                ⏭
+              </button>
+              {onOpenChiptuneMixer && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    audioController.playMenuSelect('tab');
+                    onOpenChiptuneMixer();
+                  }}
+                  title="Buka WebChiptuneEngine BGM & SFX Mixer"
+                  className="border-l border-[#3e3a4d] px-2 py-1 text-[10px] font-mono text-emerald-200 hover:bg-[#2a2638] whitespace-nowrap"
+                >
+                  Mixer
+                </button>
+              )}
+            </div>
+          )}
           <button
             type="button"
             onClick={onOpenStudioSettings}
@@ -283,7 +484,10 @@ export const PixelVnStage: React.FC<PixelVnStageProps> = ({
               <button
                 key={rm.id}
                 type="button"
-                onClick={() => onSelectRoom(rm.id)}
+                onClick={() => {
+                  audioController?.playMenuSelect('confirm');
+                  onSelectRoom(rm.id);
+                }}
                 className={`px-2.5 py-1 border text-[11px] font-mono transition-colors inline-flex items-center gap-1.5 whitespace-nowrap ${
                   active
                     ? 'bg-[#2a253a] border-amber-400 text-amber-200 font-bold'
@@ -356,212 +560,23 @@ export const PixelVnStage: React.FC<PixelVnStageProps> = ({
         </div>
       )}
 
-      {/* Main Pixel Stage Frame (Scenic Window + Choice Stack + Dialogue Box) */}
-      <div className="px-4 sm:px-10 pb-5 relative">
-        {/* Wide Scenic Pixel Window */}
-        <div className="relative w-full h-64 sm:h-80 border-2 border-[#302c3d] bg-[#0b0a10] overflow-hidden">
-          <PixelSceneBackdrop
-            roomId={activeNode?.roomId ?? activeRoomId}
-            slotKey={slotKey}
-            shaderEnabled={studioPrefs.shaderEnabled}
-            shaderMode={studioPrefs.shaderMode}
-            vfxEnabled={studioPrefs.vfxEnabled}
-          />
+      {/* Retro CRT Dialogue Overlay + VisualNovelPortraitManager Stage */}
+      <PixelDialogueOverlay
+        relEngine={relEngine}
+        relSnapshot={relSnapshot}
+        portraitManager={portraitManager}
+        audioController={audioController}
+        sfxManager={audioController?.sfx}
+        activeRoomId={activeRoomId}
+        slotKey={slotKey}
+        shaderEnabled={studioPrefs.shaderEnabled}
+        shaderMode={studioPrefs.shaderMode}
+        vfxEnabled={studioPrefs.vfxEnabled}
+      />
 
-          {/* Pixel Character Sprites (1 or 2 Side-by-Side) */}
-          <div className="absolute inset-0 flex items-end justify-center pointer-events-none px-4 sm:px-12">
-            {activeSprites.length === 1 && (
-              <div
-                className={`h-[86%] flex items-end ${
-                  activeSprites[0].position === 'left'
-                    ? 'mr-auto ml-6'
-                    : activeSprites[0].position === 'center'
-                      ? 'mx-auto'
-                      : 'ml-auto mr-4 sm:mr-10'
-                }`}
-              >
-                <button
-                  type="button"
-                  onClick={() =>
-                    relEngine.startCharacterRoute(
-                      activeSprites[0].characterId,
-                      slotKey,
-                      activeRoomId
-                    )
-                  }
-                  className="h-full pointer-events-auto cursor-pointer hover:scale-[1.02] transition-transform"
-                  title="Klik untuk berbicara"
-                >
-                  <PixelCharacterSprite
-                    characterId={activeSprites[0].characterId}
-                    expression={activeSprites[0].expression}
-                    className="h-full w-auto"
-                  />
-                </button>
-              </div>
-            )}
-
-            {activeSprites.length >= 2 && (
-              <div className="h-[86%] flex items-end justify-center gap-0 sm:gap-2 ml-auto mr-2 sm:mr-12">
-                {activeSprites.slice(0, 2).map((sp) => (
-                  <button
-                    key={sp.characterId}
-                    type="button"
-                    onClick={() =>
-                      relEngine.startCharacterRoute(sp.characterId, slotKey, activeRoomId)
-                    }
-                    className="h-full pointer-events-auto cursor-pointer hover:scale-[1.02] transition-transform"
-                    title="Klik untuk berbicara"
-                  >
-                    <PixelCharacterSprite
-                      characterId={sp.characterId}
-                      expression={sp.expression}
-                      className="h-full w-auto"
-                    />
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Room Badge in Window Corner */}
-          <div className="absolute top-2.5 left-2.5 bg-[#09080c]/80 border border-[#3e3a4d] px-2 py-0.5 text-[10px] font-mono text-slate-200">
-            {activeRoomName} · {progress.playerName} (Hari #{progress.dayCount})
-          </div>
-        </div>
-
-        {/* Centered Stacked Choices (Overlapping bottom of scenic window like Reference #1 & #3) */}
-        {activeNode?.choices && activeNode.choices.length > 0 && !editingName && (
-          <div className="relative z-20 -mt-14 mb-2 flex flex-col items-center gap-2">
-            {activeNode.choices.map((ch, idx) => {
-              const isFocused = idx === focusedChoiceIdx || Boolean(ch.highlighted && focusedChoiceIdx === 0);
-              return (
-                <button
-                  key={ch.id}
-                  type="button"
-                  onMouseEnter={() => setFocusedChoiceIdx(idx)}
-                  onClick={() => {
-                    if (ch.actionType === 'confirm_name_no') {
-                      setDraftName(progress.playerName || 'Nita');
-                      setEditingName(true);
-                      return;
-                    }
-                    relEngine.selectChoice(ch.id, slotKey, activeRoomId);
-                  }}
-                  className={`min-w-[160px] max-w-sm px-6 py-2 bg-[#23202e]/95 hover:bg-[#2d293b] border-2 font-pixel text-sm sm:text-base tracking-wider text-white transition-colors shadow-lg ${
-                    isFocused ? 'border-amber-400' : 'border-[#3e3a4d]'
-                  }`}
-                >
-                  {ch.label}
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Custom Player Name Input if user clicked NO */}
-        {editingName && (
-          <div className="relative z-20 -mt-14 mb-2 flex justify-center">
-            <div className="bg-[#1b1924] border-2 border-amber-400 p-3 flex items-center gap-2 shadow-xl">
-              <input
-                type="text"
-                maxLength={16}
-                value={draftName}
-                onChange={(e) => setDraftName(e.target.value)}
-                placeholder="Nama panggilan..."
-                className="bg-[#09080c] border border-[#3e3a4d] px-3 py-1.5 font-pixel text-xs text-white focus:outline-none focus:border-amber-400"
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  relEngine.setPlayerName(draftName, true);
-                  setEditingName(false);
-                  relEngine.selectChoice('yes', slotKey, activeRoomId);
-                }}
-                className="px-3 py-1.5 bg-amber-400 text-slate-950 font-pixel text-xs font-bold"
-              >
-                OK
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Right-Aligned ■ AUTO-SKIP Bar + Speaker Tab Row */}
-        <div
-          className={`flex items-end justify-between ${
-            activeNode?.choices?.length ? 'mt-1' : 'mt-3'
-          }`}
-        >
-          {/* Speaker Nameplate Tab attached top-left of dialogue box */}
-          {activeNode?.speakerName ? (
-            <div className="bg-[#1b1924] border-t-2 border-x-2 border-[#3e3a4d] px-4 py-1 font-pixel-body text-xl sm:text-2xl text-slate-100 leading-none translate-y-[2px] z-10">
-              {activeNode.speakerName}
-            </div>
-          ) : (
-            <div />
-          )}
-
-          <button
-            type="button"
-            onClick={() => relEngine.toggleAutoSkip()}
-            className={`pb-1.5 inline-flex items-center gap-1.5 font-pixel text-[11px] tracking-wider transition-colors ${
-              progress.autoSkip ? 'text-amber-300' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <span
-              className={`inline-block w-2.5 h-2.5 border ${
-                progress.autoSkip
-                  ? 'bg-amber-400 border-amber-200'
-                  : 'bg-slate-300 border-slate-500'
-              }`}
-            />
-            <span>AUTO-SKIP</span>
-          </button>
-        </div>
-
-        {/* Crisp Black Pixel Dialogue Box */}
-        <div
-          onClick={handleBoxClick}
-          className="relative min-h-[124px] bg-[#09080c] border-2 border-[#3e3a4d] p-4 sm:p-5 cursor-pointer flex flex-col justify-between"
-        >
-          <p
-            className={`font-pixel-body text-2xl sm:text-[26px] leading-snug tracking-wide ${
-              activeNode?.textColor === 'cyan'
-                ? 'text-sky-200'
-                : activeNode?.textColor === 'amber'
-                  ? 'text-amber-200'
-                  : 'text-white'
-            }`}
-          >
-            {typedText}
-            {!isTypingDone && <span className="inline-block w-2 h-5 bg-white ml-1 align-middle" />}
-          </p>
-
-          <div className="flex items-center justify-between pt-2">
-            <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-slate-400">
-              {scheduledCharsInRoom.length > 0 && !activeNode && (
-                <span>
-                  Klik sprite {scheduledCharsInRoom.map((c) => c.name).join(' / ')} di jendela untuk berbicara
-                </span>
-              )}
-              {progress.unlockedAffectionEvents.length > 0 && (
-                <span className="text-rose-300">
-                  ★ Affection Events: {progress.unlockedAffectionEvents.length} terbuka
-                </span>
-              )}
-            </div>
-
-            {/* Bottom-Right Pixel Advance Triangle ▼ */}
-            {isTypingDone && (!activeNode?.choices || activeNode.choices.length === 0) && (
-              <span className="font-pixel text-base text-white animate-bounce leading-none">
-                ▼
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Bottom 5-Character Affection Status Strip */}
-        <div className="mt-3 grid grid-cols-2 sm:grid-cols-5 gap-2">
+      {/* Bottom 5-Character Affection Status Strip */}
+      <div className="px-4 sm:px-10 pb-5">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
           {ROMANCE_CHARACTERS.map((ch) => {
             const aff = progress.affectionMap[ch.id] ?? 0;
             const slot = ch.schedule[slotKey];

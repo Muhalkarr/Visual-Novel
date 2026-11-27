@@ -137,6 +137,7 @@ export const TerminalHackMiniGame: React.FC<TerminalHackMiniGameProps> = ({
 interface DoorLockpickMiniGameProps {
   isOpen: boolean;
   doorLabel: string;
+  lockpickSkillLevel?: number;
   locale: 'id' | 'en';
   onUnlock: () => void;
   onCancel: () => void;
@@ -145,6 +146,7 @@ interface DoorLockpickMiniGameProps {
 export const DoorLockpickMiniGame: React.FC<DoorLockpickMiniGameProps> = ({
   isOpen,
   doorLabel,
+  lockpickSkillLevel = 0,
   locale,
   onUnlock,
   onCancel,
@@ -154,6 +156,12 @@ export const DoorLockpickMiniGame: React.FC<DoorLockpickMiniGameProps> = ({
   const [statusMsg, setStatusMsg] = useState('');
   const posRef = useRef(15);
   const dirRef = useRef(1);
+
+  const clampedSkill = Math.max(0, Math.min(6, lockpickSkillLevel));
+  const zonePad = clampedSkill * 3.5;
+  const zoneTop = Math.max(18, 36 - zonePad);
+  const zoneBottom = Math.min(82, 64 + zonePad);
+  const zoneHeight = zoneBottom - zoneTop;
 
   useEffect(() => {
     if (!isOpen) {
@@ -166,7 +174,7 @@ export const DoorLockpickMiniGame: React.FC<DoorLockpickMiniGameProps> = ({
     const tick = (now: number) => {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
-      const speed = 105 + lockedCount * 22;
+      const speed = Math.max(65, 105 + lockedCount * 22 - clampedSkill * 8);
       posRef.current += dirRef.current * dt * speed;
       if (posRef.current >= 92) {
         posRef.current = 92;
@@ -180,10 +188,10 @@ export const DoorLockpickMiniGame: React.FC<DoorLockpickMiniGameProps> = ({
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [isOpen, lockedCount]);
+  }, [isOpen, lockedCount, clampedSkill]);
 
   const attemptPin = () => {
-    const hit = posRef.current >= 36 && posRef.current <= 64;
+    const hit = posRef.current >= zoneTop && posRef.current <= zoneBottom;
     if (hit) {
       const next = lockedCount + 1;
       if (next >= 3) {
@@ -225,9 +233,16 @@ export const DoorLockpickMiniGame: React.FC<DoorLockpickMiniGameProps> = ({
               {isEn ? `Lockpick: ${doorLabel}` : `Lockpick Pintu: ${doorLabel}`}
             </h4>
           </div>
-          <button type="button" onClick={onCancel} className="p-1 text-slate-400 hover:text-white">
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            {clampedSkill > 0 && (
+              <span className="text-[10px] font-mono text-emerald-300 bg-emerald-950/50 border border-emerald-500/40 px-2 py-0.5 rounded">
+                Mastery +{clampedSkill}
+              </span>
+            )}
+            <button type="button" onClick={onCancel} className="p-1 text-slate-400 hover:text-white">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-3 gap-3">
@@ -248,7 +263,7 @@ export const DoorLockpickMiniGame: React.FC<DoorLockpickMiniGameProps> = ({
               >
                 <div
                   className="absolute left-0 right-0 bg-emerald-500/20 border-y border-emerald-400/60"
-                  style={{ top: '36%', height: '28%' }}
+                  style={{ top: `${zoneTop}%`, height: `${zoneHeight}%` }}
                 />
                 <div
                   className={`absolute left-3 right-3 h-4 rounded ${

@@ -36,6 +36,12 @@ import {
   saveRomanceProgressDao,
 } from '../types/studioGameSchema';
 import { MiniGameResult } from './MiniGameModule';
+import {
+  evaluateDayAdvanceRentState,
+  getCameraEffectiveSpecs,
+  getEffectiveStudentStats,
+  recordCapturedNightMedia,
+} from './RecLifeCycleManager';
 
 export type GamePhase =
   | 'TITLE_MENU'
@@ -773,6 +779,13 @@ export class GameEngine {
         giftsInventory: { ...this.romanceProgress.giftsInventory },
         unlockedEndings: [...this.romanceProgress.unlockedEndings],
         completedDateQuests: [...this.romanceProgress.completedDateQuests],
+        rentState: { ...this.romanceProgress.rentState },
+        studentStats: { ...this.romanceProgress.studentStats },
+        cameraGear: { ...this.romanceProgress.cameraGear },
+        stealthSkills: { ...this.romanceProgress.stealthSkills },
+        capturedMediaQueue: [...this.romanceProgress.capturedMediaQueue],
+        dailySuppliesInventory: { ...this.romanceProgress.dailySuppliesInventory },
+        ownedAccessories: [...this.romanceProgress.ownedAccessories],
       },
       scheduleSlotKey: getScheduleSlotKey(effMin),
       telemetry: { ...this.telemetry },
@@ -926,23 +939,28 @@ export class GameEngine {
   }
 
   public restAtCafeOrNextDay(): void {
-    this.romanceProgress = {
-      ...this.romanceProgress,
-      dayCount: this.romanceProgress.dayCount + 1,
-      stamina: 100,
-      allowanceCoins: this.romanceProgress.allowanceCoins + 30,
-    };
+    const nextProg = evaluateDayAdvanceRentState(this.romanceProgress);
+    this.romanceProgress = nextProg;
     saveRomanceProgressDao(this.romanceProgress);
     if (this.studioPrefs.schedulingEnabled) {
       this.studioPrefs = { ...this.studioPrefs, timeMinutes: 8 * 60 };
     }
     this.spawnParticles(this.player.x, this.player.y, 16, '#34d399', 95, 3.2, 0.65);
     this.playSfx(640, 'triangle', 0.14);
-    this.callbacks.onToast(
-      `Hari ke-${this.romanceProgress.dayCount} Dimulai`,
-      'Stamina pulih 100%, +30 Koin saku, dan jadwal kampus diperbarui ke pagi (08:00).',
-      'success'
-    );
+    const daysLeft = nextProg.rentState.dueDayCount - nextProg.dayCount;
+    if (nextProg.rentState.overdue) {
+      this.callbacks.onToast(
+        `Hari ke-${nextProg.dayCount} · Sewa Jatuh Tempo!`,
+        `Tagihan sewa Pekan #${nextProg.rentState.weekNumber} (¢${nextProg.rentState.rentAmount}) belum dibayar!`,
+        'warning'
+      );
+    } else {
+      this.callbacks.onToast(
+        `Hari ke-${nextProg.dayCount} Dimulai`,
+        `Stamina ${nextProg.stamina}%, +¢25 saku. Tenggat sewa: ${Math.max(0, daysLeft)} hari lagi.`,
+        'success'
+      );
+    }
     this.emitSnapshot();
   }
 
@@ -1304,7 +1322,12 @@ export class GameEngine {
       3.0,
       0.5
     );
-    const rangeBoost = this.progression.skills.wideScanner * 22;
+    const cameraSpecs = getCameraEffectiveSpecs(
+      this.romanceProgress.cameraGear,
+      this.romanceProgress.stealthSkills
+    );
+    const rangeBoost =
+      this.progression.skills.wideScanner * 22 + Math.max(0, cameraSpecs.lensRangePx - 155);
 
     let dataUrl = '';
     if (this.canvas) {
@@ -1317,11 +1340,11 @@ export class GameEngine {
 
     const roomLabel =
       this.worldSchema.rooms.find((r) => r.id === this.activeRoomId)?.name ?? this.activeRoomId;
+    const slotKey = getScheduleSlotKey(
+      this.studioPrefs.schedulingEnabled ? this.studioPrefs.timeMinutes : 12 * 60
+    );
 
     if (this.missionMode === 'romance_vn') {
-      const slotKey = getScheduleSlotKey(
-        this.studioPrefs.schedulingEnabled ? this.studioPrefs.timeMinutes : 12 * 60
-      );
       const nearChar = ROMANCE_CHARACTERS.find((c) => {
         const slot = c.schedule[slotKey];
         return slot.roomId === this.activeRoomId && Math.hypot(slot.x - p.x, slot.y - p.y) < 165 + rangeBoost;
@@ -1336,12 +1359,27 @@ export class GameEngine {
           : [...this.romanceProgress.completedDateQuests, 'rq_photo'];
         const prevAff = this.romanceProgress.affectionMap[nearChar.id] ?? 0;
         const nextAff = Math.min(100, prevAff + affBoost);
-        this.romanceProgress = {
+        let updatedProg: RomanceProgressDao = {
           ...this.romanceProgress,
           stamina: Math.max(0, this.romanceProgress.stamina - 4),
           affectionMap: { ...this.romanceProgress.affectionMap, [nearChar.id]: nextAff },
           completedDateQuests: nextQuests,
         };
+        const mediaSave = recordCapturedNightMedia(updatedProg, {
+          title: `Potret ${nearChar.name} · ${roomLabel}`,
+          mediaType: 'photo',
+          roomId: this.activeRoomId,
+          targetName: nearChar.name,
+          baseRewardCoins: 32,
+          estimatedViews: 980,
+          stealthBonus: slotKey === 'night',
+          slotKey,
+          thumbnailDataUrl: dataUrl || undefined,
+        });
+        if (mediaSave.ok) {
+          updatedProg = mediaSave.nextProgress;
+        }
+        this.romanceProgress = updatedProg;
         saveRomanceProgressDao(this.romanceProgress);
         this.completedQuests = [...nextQuests];
         this.flags.memory_snapped = true;
@@ -1351,18 +1389,35 @@ export class GameEngine {
         this.callbacks.onAchievement('ach_first_photo');
         this.callbacks.onToast(
           `Foto Kenangan Bersama ${nearChar.name}!`,
-          `Tersimpan ke Album CG (+${affBoost}% Afeksi · Total ${nextAff}%).`,
+          `Tersimpan ke Album CG & Portal REC (+${affBoost}% Afeksi · Total ${nextAff}%).`,
           'success'
         );
       } else {
         this.missionScore += 40;
+        const mediaSave = recordCapturedNightMedia(this.romanceProgress, {
+          title: `Suasana ${roomLabel}`,
+          mediaType: 'photo',
+          roomId: this.activeRoomId,
+          targetName: roomLabel,
+          baseRewardCoins: 20,
+          estimatedViews: 520,
+          stealthBonus: slotKey === 'night',
+          slotKey,
+          thumbnailDataUrl: dataUrl || undefined,
+        });
+        if (mediaSave.ok) {
+          this.romanceProgress = mediaSave.nextProgress;
+          saveRomanceProgressDao(this.romanceProgress);
+        }
         if (dataUrl) {
           this.callbacks.onPhotoCaptured(dataUrl, roomLabel, false);
         }
         this.callbacks.onToast(
           'Foto Kampus Tersimpan',
-          'Dekati Rina, Nadia, atau Kaito untuk bonus Afeksi foto kenangan!',
-          'info'
+          mediaSave.ok
+            ? 'Foto masuk memori DSLR (siap diunggah di Portal REC)!'
+            : mediaSave.message,
+          mediaSave.ok ? 'info' : 'warning'
         );
       }
       this.emitSnapshot();
@@ -1379,6 +1434,21 @@ export class GameEngine {
     if (validEvidence || nearGuard) {
       this.photoCount++;
       this.missionScore += 120;
+      const mediaSave = recordCapturedNightMedia(this.romanceProgress, {
+        title: validEvidence ? `Bukti Rahasia · ${roomLabel}` : `Rekaman Patroli · ${roomLabel}`,
+        mediaType: validEvidence ? 'video' : 'photo',
+        roomId: this.activeRoomId,
+        targetName: validEvidence ? 'Dokumen Rahasia' : 'Patroli Keamanan',
+        baseRewardCoins: validEvidence ? 62 : 42,
+        estimatedViews: validEvidence ? 1950 : 1200,
+        stealthBonus: this.suspicion < 0.35,
+        slotKey,
+        thumbnailDataUrl: dataUrl || undefined,
+      });
+      if (mediaSave.ok) {
+        this.romanceProgress = mediaSave.nextProgress;
+        saveRomanceProgressDao(this.romanceProgress);
+      }
       if (dataUrl) {
         this.callbacks.onPhotoCaptured(dataUrl, roomLabel, validEvidence);
       }
@@ -1386,7 +1456,13 @@ export class GameEngine {
         this.callbacks.onAchievement('ach_first_photo');
         this.completeQuest('q_photo');
       } else {
-        this.callbacks.onToast('DSLR Capture', 'Foto patroli disimpan ke Galeri CG (+120 poin).', 'info');
+        this.callbacks.onToast(
+          'DSLR Capture',
+          mediaSave.ok
+            ? 'Foto patroli masuk Portal REC & Galeri CG (+120 poin).'
+            : mediaSave.message,
+          mediaSave.ok ? 'info' : 'warning'
+        );
       }
     } else {
       this.callbacks.onToast('DSLR Flash', 'Arahkan lebih dekat ke Dokumen Bukti atau Satpam.', 'warning');
@@ -1453,11 +1529,19 @@ export class GameEngine {
     for (const sc of this.scraps) {
       if (!sc.collected && Math.hypot(p.x - sc.x, p.y - sc.y) < 52) {
         sc.collected = true;
-        this.scrapEarned += sc.amount;
-        this.callbacks.onScrapEarned(sc.amount);
+        const quickBonus = (this.romanceProgress.stealthSkills?.quickHands ?? 0) * 2;
+        const totalScrap = sc.amount + quickBonus;
+        this.scrapEarned += totalScrap;
+        this.callbacks.onScrapEarned(totalScrap);
         this.spawnParticles(sc.x, sc.y, 10, '#fbbf24', 85, 2.8, 0.45);
         this.playSfx(760, 'sine', 0.09);
-        this.callbacks.onToast('Intel Scrap', `+${sc.amount} Intel Scrap untuk Safe House.`, 'success');
+        this.callbacks.onToast(
+          'Intel Scrap',
+          quickBonus > 0
+            ? `+${totalScrap} Intel Scrap (Bonus Tangan Cekatan +${quickBonus}).`
+            : `+${totalScrap} Intel Scrap untuk Safe House.`,
+          'success'
+        );
         this.emitSnapshot();
         return;
       }
@@ -2079,6 +2163,8 @@ export class GameEngine {
       let maxSusp = 0;
       const roniBonus = (this.npcAffection.guard_roni ?? 25) >= 50 ? 0.78 : 1.0;
       const blackoutRateMult = this.dailyConfig?.modifier === 'blackout_night' ? 1.25 : 1.0;
+      const effStats = getEffectiveStudentStats(this.romanceProgress);
+      const skillSuspicionMult = Math.max(0.35, 1 - effStats.suspicionReductionPct / 100);
 
       for (const c of this.cctvs) {
         if (c.disabledTimer > 0) {
@@ -2096,7 +2182,8 @@ export class GameEngine {
               if (nearest && nearest.state !== 'STUNNED') {
                 nearest.suspicion = Math.min(
                   1.0,
-                  nearest.suspicion + 0.92 * lighting.detectionRateMultiplier * blackoutRateMult * dt
+                  nearest.suspicion +
+                    0.92 * lighting.detectionRateMultiplier * blackoutRateMult * skillSuspicionMult * dt
                 );
                 nearest.investigateTarget = { x: this.player.x, y: this.player.y };
                 nearest.investigateTimer = 4.0;
@@ -2206,7 +2293,8 @@ export class GameEngine {
               (this.isSneaking ? 0.58 : 1.24) *
               lighting.detectionRateMultiplier *
               blackoutRateMult *
-              roniBonus;
+              roniBonus *
+              skillSuspicionMult;
             g.suspicion = Math.min(1.0, g.suspicion + rate * dt);
             g.investigateTarget = { x: this.player.x, y: this.player.y };
             g.investigateTimer = 4.5;

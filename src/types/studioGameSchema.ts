@@ -780,6 +780,211 @@ export const ROMANCE_CHARACTERS: RomanceCharacterDef[] = [
   },
 ];
 
+export interface InteractionHistoryEntry {
+  id: string;
+  dayCount: number;
+  dayLabel: string;
+  slotKey: 'morning' | 'afternoon' | 'evening' | 'night';
+  characterId: RomanceCharacterId;
+  characterName: string;
+  actionLabel: string;
+  affectionDelta: number;
+  resultingAffection: number;
+  timestamp: string;
+  entryType?: 'dialogue_choice' | 'gift' | 'minigame' | 'event';
+  dialoguePrompt?: string;
+  choiceLabel?: string;
+  roomId?: string;
+  branchFlag?: string;
+}
+
+export type DailySupplyId =
+  | 'battery_pack'
+  | 'energy_drink'
+  | 'gourmet_bento'
+  | 'stealth_charm';
+
+export interface DailySupplyDef {
+  id: DailySupplyId;
+  name: string;
+  costCoins: number;
+  description: string;
+  effectSummary: string;
+}
+
+export interface CharacterAccessoryDef {
+  id: string;
+  name: string;
+  costCoins: number;
+  slotLabel: string;
+  description: string;
+  statBonus: {
+    intelligence?: number;
+    dexterity?: number;
+    charm?: number;
+    suspicionReductionPct?: number;
+  };
+}
+
+export interface RentCycleState {
+  weekNumber: number;
+  rentAmount: number;
+  dueDayCount: number;
+  totalPaidCount: number;
+  graceDaysLeft: number;
+  overdue: boolean;
+}
+
+export interface StudentStats {
+  intelligence: number;
+  dexterity: number;
+  charm: number;
+}
+
+export interface CameraGearState {
+  lensLevel: number; // 1..4
+  batteryLevel: number; // 1..4
+  memoryLevel: number; // 1..4
+  currentBattery: number; // 0..maxBattery
+}
+
+export interface StealthSkillTree {
+  lockpickMastery: number; // 0..3
+  shadowStep: number; // 0..3
+  silentShutter: number; // 0..3
+  quickHands: number; // 0..3
+}
+
+export interface CapturedMediaEntry {
+  id: string;
+  title: string;
+  mediaType: 'photo' | 'video';
+  roomId: string;
+  targetName: string;
+  qualityScore: number;
+  stealthBonus: boolean;
+  baseRewardCoins: number;
+  estimatedViews: number;
+  capturedDay: number;
+  slotKey: 'morning' | 'afternoon' | 'evening' | 'night';
+  uploaded: boolean;
+  earnedCoins?: number;
+  thumbnailDataUrl?: string;
+}
+
+export const DAILY_SUPPLY_ITEMS: DailySupplyDef[] = [
+  {
+    id: 'battery_pack',
+    name: 'Baterai Cadangan DSLR',
+    costCoins: 28,
+    description: 'Mengisi ulang daya baterai kamera malam untuk misi jepretan & rekaman.',
+    effectSummary: '+55% Baterai Kamera',
+  },
+  {
+    id: 'energy_drink',
+    name: 'Kopi Espresso Kaleng',
+    costCoins: 24,
+    description: 'Minuman cepat penambah tenaga saat jadwal kuliah dan shift padat.',
+    effectSummary: '+35 Stamina',
+  },
+  {
+    id: 'gourmet_bento',
+    name: 'Bento Spesial Kampus',
+    costCoins: 42,
+    description: 'Bekal bergizi tinggi untuk menjaga stamina penuh dan aura percaya diri.',
+    effectSummary: '+60 Stamina & +2 Charm',
+  },
+  {
+    id: 'stealth_charm',
+    name: 'Jimat Peredam Kecurigaan',
+    costCoins: 38,
+    description: 'Menenangkan situasi saat misi malam dan menurunkan kewaspadaan patroli.',
+    effectSummary: '+20 Baterai & +1 Skill Point',
+  },
+];
+
+export const CHARACTER_ACCESSORIES: CharacterAccessoryDef[] = [
+  {
+    id: 'acc_lens_strap',
+    name: 'Tali Lensa Kulit Vintage',
+    costCoins: 65,
+    slotLabel: 'Kamera & Gaya',
+    description: 'Memantapkan genggaman kamera dan memberi kesan fotografer profesional.',
+    statBonus: { dexterity: 4, charm: 3 },
+  },
+  {
+    id: 'acc_smart_glasses',
+    name: 'Kacamata Baca Cerdas',
+    costCoins: 70,
+    slotLabel: 'Wajah',
+    description: 'Membantu analisis kode dan catatan kuliah lebih cepat.',
+    statBonus: { intelligence: 6, charm: 2 },
+  },
+  {
+    id: 'acc_velvet_ribbon',
+    name: 'Aksesori Pita Beludru',
+    costCoins: 80,
+    slotLabel: 'Kostum Harian',
+    description: 'Meningkatkan daya tarik di Kafe Senja serta bonus penonton Portal Unggah.',
+    statBonus: { charm: 7 },
+  },
+  {
+    id: 'acc_midnight_hoodie',
+    name: 'Jaket Stealth Tengah Malam',
+    costCoins: 110,
+    slotLabel: 'Stealth Malam',
+    description: 'Mengurangi deteksi siluet saat misi malam dan menambah kelincahan.',
+    statBonus: { dexterity: 5, suspicionReductionPct: 20 },
+  },
+];
+
+export const STEALTH_SKILL_TREE_NODES: Array<{
+  key: keyof StealthSkillTree;
+  title: string;
+  category: 'lockpick' | 'stealth';
+  maxLevel: number;
+  costSpPerLevel: number;
+  costCoinsPerLevel: number;
+  effectPerLevel: string;
+}> = [
+  {
+    key: 'lockpickMastery',
+    title: 'Ahli Pembobol Kunci',
+    category: 'lockpick',
+    maxLevel: 3,
+    costSpPerLevel: 1,
+    costCoinsPerLevel: 35,
+    effectPerLevel: 'Memperlebar zona pin lockpick +14% & memperlambat jarum.',
+  },
+  {
+    key: 'shadowStep',
+    title: 'Langkah Bayangan',
+    category: 'stealth',
+    maxLevel: 3,
+    costSpPerLevel: 1,
+    costCoinsPerLevel: 40,
+    effectPerLevel: 'Menurunkan laju meter kecurigaan patroli & CCTV sebesar 14% per level.',
+  },
+  {
+    key: 'silentShutter',
+    title: 'Rana Kamera Senyap',
+    category: 'stealth',
+    maxLevel: 3,
+    costSpPerLevel: 1,
+    costCoinsPerLevel: 35,
+    effectPerLevel: 'Menghemat konsumsi baterai DSLR -15% & meredam lonjakan curiga saat memotret.',
+  },
+  {
+    key: 'quickHands',
+    title: 'Tangan Cekatan (Pickpocket)',
+    category: 'lockpick',
+    maxLevel: 3,
+    costSpPerLevel: 1,
+    costCoinsPerLevel: 45,
+    effectPerLevel: 'Bonus koin +15% saat shift/mencopet kunci dan bonus zona mini-game dapur.',
+  },
+];
+
 export interface RomanceProgressDao {
   playerName: string;
   nameConfirmed: boolean;
@@ -792,6 +997,20 @@ export interface RomanceProgressDao {
   unlockedEndings: RomanceCharacterId[];
   unlockedAffectionEvents: string[];
   completedDateQuests: string[];
+  branchFlags: Record<string, boolean | string>;
+  interactionHistory: InteractionHistoryEntry[];
+  completedWeekendEvents: string[];
+  rentState: RentCycleState;
+  studentStats: StudentStats;
+  cameraGear: CameraGearState;
+  stealthSkills: StealthSkillTree;
+  capturedMediaQueue: CapturedMediaEntry[];
+  dailySuppliesInventory: Record<DailySupplyId, number>;
+  ownedAccessories: string[];
+  equippedAccessoryId: string | null;
+  roomCleanliness: number;
+  lastCleanedDay: number;
+  skillPoints: number;
 }
 
 export const ROMANCE_PROGRESS_DAO_KEY = 'flame_romance_vn_dao_v2';
@@ -819,7 +1038,126 @@ export const DEFAULT_ROMANCE_PROGRESS: RomanceProgressDao = {
   unlockedEndings: [],
   unlockedAffectionEvents: [],
   completedDateQuests: ['rq_arrive'],
+  branchFlags: {},
+  interactionHistory: [],
+  completedWeekendEvents: [],
+  rentState: {
+    weekNumber: 1,
+    rentAmount: 220,
+    dueDayCount: 7,
+    totalPaidCount: 0,
+    graceDaysLeft: 0,
+    overdue: false,
+  },
+  studentStats: {
+    intelligence: 18,
+    dexterity: 16,
+    charm: 20,
+  },
+  cameraGear: {
+    lensLevel: 1,
+    batteryLevel: 1,
+    memoryLevel: 1,
+    currentBattery: 100,
+  },
+  stealthSkills: {
+    lockpickMastery: 0,
+    shadowStep: 0,
+    silentShutter: 0,
+    quickHands: 0,
+  },
+  capturedMediaQueue: [],
+  dailySuppliesInventory: {
+    battery_pack: 1,
+    energy_drink: 1,
+    gourmet_bento: 0,
+    stealth_charm: 0,
+  },
+  ownedAccessories: [],
+  equippedAccessoryId: null,
+  roomCleanliness: 82,
+  lastCleanedDay: 1,
+  skillPoints: 2,
 };
+
+export function normalizeRomanceProgressDao(
+  parsed: Partial<RomanceProgressDao>
+): RomanceProgressDao {
+  const batteryLv = Math.max(1, Math.min(4, Number(parsed.cameraGear?.batteryLevel ?? 1)));
+  const maxBattery = 100 + (batteryLv - 1) * 35;
+
+  return {
+    ...DEFAULT_ROMANCE_PROGRESS,
+    ...parsed,
+    playerName:
+      typeof parsed.playerName === 'string' && parsed.playerName.trim()
+        ? parsed.playerName.trim().slice(0, 16)
+        : DEFAULT_ROMANCE_PROGRESS.playerName,
+    dayCount: Math.max(1, Number(parsed.dayCount) || 1),
+    stamina: Math.max(0, Math.min(100, Number(parsed.stamina ?? 100))),
+    allowanceCoins: Math.max(0, Number(parsed.allowanceCoins ?? 50)),
+    affectionMap: { ...DEFAULT_ROMANCE_PROGRESS.affectionMap, ...(parsed.affectionMap ?? {}) },
+    giftsInventory: { ...DEFAULT_ROMANCE_PROGRESS.giftsInventory, ...(parsed.giftsInventory ?? {}) },
+    unlockedEndings: Array.isArray(parsed.unlockedEndings) ? parsed.unlockedEndings : [],
+    unlockedAffectionEvents: Array.isArray(parsed.unlockedAffectionEvents)
+      ? parsed.unlockedAffectionEvents
+      : [],
+    completedDateQuests: Array.isArray(parsed.completedDateQuests)
+      ? parsed.completedDateQuests
+      : ['rq_arrive'],
+    branchFlags:
+      parsed.branchFlags && typeof parsed.branchFlags === 'object' ? parsed.branchFlags : {},
+    interactionHistory: Array.isArray(parsed.interactionHistory)
+      ? parsed.interactionHistory.slice(0, 40)
+      : [],
+    completedWeekendEvents: Array.isArray(parsed.completedWeekendEvents)
+      ? parsed.completedWeekendEvents
+      : [],
+    rentState: {
+      ...DEFAULT_ROMANCE_PROGRESS.rentState,
+      ...(parsed.rentState ?? {}),
+      weekNumber: Math.max(1, Number(parsed.rentState?.weekNumber ?? 1)),
+      rentAmount: Math.max(100, Number(parsed.rentState?.rentAmount ?? 220)),
+      dueDayCount: Math.max(1, Number(parsed.rentState?.dueDayCount ?? 7)),
+      totalPaidCount: Math.max(0, Number(parsed.rentState?.totalPaidCount ?? 0)),
+      graceDaysLeft: Math.max(0, Number(parsed.rentState?.graceDaysLeft ?? 0)),
+      overdue: Boolean(parsed.rentState?.overdue),
+    },
+    studentStats: {
+      intelligence: Math.max(0, Math.min(100, Number(parsed.studentStats?.intelligence ?? 18))),
+      dexterity: Math.max(0, Math.min(100, Number(parsed.studentStats?.dexterity ?? 16))),
+      charm: Math.max(0, Math.min(100, Number(parsed.studentStats?.charm ?? 20))),
+    },
+    cameraGear: {
+      lensLevel: Math.max(1, Math.min(4, Number(parsed.cameraGear?.lensLevel ?? 1))),
+      batteryLevel: batteryLv,
+      memoryLevel: Math.max(1, Math.min(4, Number(parsed.cameraGear?.memoryLevel ?? 1))),
+      currentBattery: Math.max(
+        0,
+        Math.min(maxBattery, Number(parsed.cameraGear?.currentBattery ?? maxBattery))
+      ),
+    },
+    stealthSkills: {
+      lockpickMastery: Math.max(0, Math.min(3, Number(parsed.stealthSkills?.lockpickMastery ?? 0))),
+      shadowStep: Math.max(0, Math.min(3, Number(parsed.stealthSkills?.shadowStep ?? 0))),
+      silentShutter: Math.max(0, Math.min(3, Number(parsed.stealthSkills?.silentShutter ?? 0))),
+      quickHands: Math.max(0, Math.min(3, Number(parsed.stealthSkills?.quickHands ?? 0))),
+    },
+    capturedMediaQueue: Array.isArray(parsed.capturedMediaQueue)
+      ? parsed.capturedMediaQueue.slice(0, 40)
+      : [],
+    dailySuppliesInventory: {
+      ...DEFAULT_ROMANCE_PROGRESS.dailySuppliesInventory,
+      ...(parsed.dailySuppliesInventory ?? {}),
+    },
+    ownedAccessories: Array.isArray(parsed.ownedAccessories) ? parsed.ownedAccessories : [],
+    equippedAccessoryId:
+      typeof parsed.equippedAccessoryId === 'string' ? parsed.equippedAccessoryId : null,
+    roomCleanliness: Math.max(0, Math.min(100, Number(parsed.roomCleanliness ?? 82))),
+    lastCleanedDay: Math.max(1, Number(parsed.lastCleanedDay ?? 1)),
+    skillPoints: Math.max(0, Number(parsed.skillPoints ?? 2)),
+  };
+}
 
 export function loadRomanceProgressDao(): RomanceProgressDao {
   try {
@@ -828,19 +1166,7 @@ export function loadRomanceProgressDao(): RomanceProgressDao {
       localStorage.getItem('flame_romance_vn_dao_v1');
     if (!raw) return DEFAULT_ROMANCE_PROGRESS;
     const parsed = JSON.parse(raw) as Partial<RomanceProgressDao>;
-    return {
-      ...DEFAULT_ROMANCE_PROGRESS,
-      ...parsed,
-      affectionMap: { ...DEFAULT_ROMANCE_PROGRESS.affectionMap, ...(parsed.affectionMap ?? {}) },
-      giftsInventory: { ...DEFAULT_ROMANCE_PROGRESS.giftsInventory, ...(parsed.giftsInventory ?? {}) },
-      unlockedEndings: Array.isArray(parsed.unlockedEndings) ? parsed.unlockedEndings : [],
-      unlockedAffectionEvents: Array.isArray(parsed.unlockedAffectionEvents)
-        ? parsed.unlockedAffectionEvents
-        : [],
-      completedDateQuests: Array.isArray(parsed.completedDateQuests)
-        ? parsed.completedDateQuests
-        : ['rq_arrive'],
-    };
+    return normalizeRomanceProgressDao(parsed);
   } catch {
     return DEFAULT_ROMANCE_PROGRESS;
   }

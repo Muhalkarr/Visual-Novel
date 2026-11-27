@@ -1,4 +1,5 @@
 import {
+  InteractionHistoryEntry,
   ROMANCE_CAMPUS_SCHEMA,
   ROMANCE_CHARACTERS,
   ROMANCE_GIFTS,
@@ -7,9 +8,11 @@ import {
   RomanceGiftId,
   RomanceProgressDao,
   loadRomanceProgressDao,
+  normalizeRomanceProgressDao,
   saveRomanceProgressDao,
 } from '../types/studioGameSchema';
 import { MiniGameMode, MiniGameResult } from './MiniGameModule';
+import { EmotionAlias, EmotionKey, normalizeEmotionKey } from './VisualNovelPortraitManager';
 
 export type TimeSlotKey = 'morning' | 'afternoon' | 'evening' | 'night';
 
@@ -17,7 +20,7 @@ export type VnSpritePosition = 'center' | 'right' | 'left';
 
 export interface VnStageSprite {
   characterId: RomanceCharacterId;
-  expression: 'netral' | 'senyum' | 'waspada' | 'panik';
+  expression: EmotionAlias;
   position: VnSpritePosition;
 }
 
@@ -29,6 +32,8 @@ export interface VnBranchChoice {
   affectionDelta?: number;
   targetCharId?: RomanceCharacterId;
   giftId?: RomanceGiftId;
+  setFlag?: { key: string; value: boolean | string };
+  weekendEventId?: string;
   launchMiniGame?: { mode: MiniGameMode; charId: RomanceCharacterId };
   actionType?:
     | 'confirm_name_yes'
@@ -63,11 +68,20 @@ export interface AffectionEventDef {
   coinReward: number;
 }
 
+export interface ChoiceFeedback {
+  charId: RomanceCharacterId;
+  charName: string;
+  delta: number;
+  emotion: EmotionKey;
+  timestamp: number;
+}
+
 export interface RelationshipSnapshot {
   progress: RomanceProgressDao;
   dayLabel: string;
   activeNode: VnDialogueNode | null;
   lastTriggeredEvent: AffectionEventDef | null;
+  lastChoiceFeedback: ChoiceFeedback | null;
 }
 
 const DAY_LABELS = ['MON.', 'TUE.', 'WED.', 'THU.', 'FRI.', 'SAT.', 'SUN.'];
@@ -204,11 +218,13 @@ export interface RelationshipCallbacks {
  * stamina, coins, branching dialogue routes, and 24h campus Affection Events.
  */
 export class VisualNovelRelationshipEngine {
-  private progress: RomanceProgressDao;
-  private dialogueGraph: Record<string, VnDialogueNode> = {};
-  private activeNodeId: string | null = null;
-  private lastTriggeredEvent: AffectionEventDef | null = null;
-  private callbacks: RelationshipCallbacks;
+  protected progress: RomanceProgressDao;
+  protected dialogueGraph: Record<string, VnDialogueNode> = {};
+  protected activeNodeId: string | null = null;
+  protected lastTriggeredEvent: AffectionEventDef | null = null;
+  protected lastChoiceFeedback: ChoiceFeedback | null = null;
+  protected callbacks: RelationshipCallbacks;
+  private snapshotListeners: Set<(snap: RelationshipSnapshot) => void> = new Set();
 
   constructor(callbacks: RelationshipCallbacks = {}) {
     this.progress = loadRomanceProgressDao();
@@ -222,6 +238,14 @@ export class VisualNovelRelationshipEngine {
     this.callbacks = callbacks;
   }
 
+  public subscribe(listener: (snap: RelationshipSnapshot) => void): () => void {
+    this.snapshotListeners.add(listener);
+    listener(this.getSnapshot());
+    return () => {
+      this.snapshotListeners.delete(listener);
+    };
+  }
+
   public getProgress(): RomanceProgressDao {
     return {
       ...this.progress,
@@ -230,12 +254,15 @@ export class VisualNovelRelationshipEngine {
       unlockedEndings: [...this.progress.unlockedEndings],
       unlockedAffectionEvents: [...this.progress.unlockedAffectionEvents],
       completedDateQuests: [...this.progress.completedDateQuests],
+      branchFlags: { ...this.progress.branchFlags },
+      interactionHistory: [...this.progress.interactionHistory],
+      completedWeekendEvents: [...this.progress.completedWeekendEvents],
     };
   }
 
   public syncExternalProgress(next: RomanceProgressDao): void {
-    this.progress = next;
-    saveRomanceProgressDao(next);
+    this.progress = normalizeRomanceProgressDao(next);
+    saveRomanceProgressDao(this.progress);
     this.emit();
   }
 
@@ -256,6 +283,7 @@ export class VisualNovelRelationshipEngine {
       dayLabel: this.getDayLabel(),
       activeNode,
       lastTriggeredEvent: this.lastTriggeredEvent,
+      lastChoiceFeedback: this.lastChoiceFeedback,
     };
   }
 
@@ -345,8 +373,8 @@ export class VisualNovelRelationshipEngine {
         speakerName: 'Kaede',
         roomId: 'campus_dorm',
         sprites: [
-          { characterId: 'kaede_lit', expression: 'senyum', position: 'left' },
-          { characterId: 'yuna_pixel', expression: 'senyum', position: 'right' },
+          { characterId: 'kaede_lit', expression: 'happy', position: 'left' },
+          { characterId: 'yuna_pixel', expression: 'surprised', position: 'right' },
         ],
         text: 'Oh! Kamu ingat percakapan Alyosha di biara? Kita bisa ngobrol lebih lama di Perpustakaan Sastra nanti, {playerName}.',
         choices: [
@@ -374,10 +402,10 @@ export class VisualNovelRelationshipEngine {
         speakerName: 'Yuna',
         roomId: 'campus_dorm',
         sprites: [
-          { characterId: 'kaede_lit', expression: 'waspada', position: 'left' },
-          { characterId: 'yuna_pixel', expression: 'senyum', position: 'right' },
+          { characterId: 'kaede_lit', expression: 'sad', position: 'left' },
+          { characterId: 'yuna_pixel', expression: 'surprised', position: 'right' },
         ],
-        text: 'Haha, ketahuan tuh! Ayo traktir kami di Kafe Senja atau coba Mini-Game biar suasana cair lagi, {playerName}!',
+        text: 'Eh?! Ketahuan deh! Ayo traktir kami di Kafe Senja atau coba Mini-Game biar suasana cair lagi, {playerName}!',
         choices: [
           {
             id: 'cafe_mem',
@@ -416,10 +444,10 @@ export class VisualNovelRelationshipEngine {
 
     const sprites: VnStageSprite[] = dualWithYuna
       ? [
-          { characterId: 'kaede_lit', expression: 'netral', position: 'left' },
-          { characterId: 'yuna_pixel', expression: 'senyum', position: 'right' },
+          { characterId: 'kaede_lit', expression: 'neutral', position: 'left' },
+          { characterId: 'yuna_pixel', expression: 'happy', position: 'right' },
         ]
-      : [{ characterId: char.id, expression: aff >= 75 ? 'senyum' : 'netral', position: 'right' }];
+      : [{ characterId: char.id, expression: aff >= 75 ? 'happy' : 'neutral', position: 'right' }];
 
     const giftChoices: VnBranchChoice[] = ROMANCE_GIFTS.filter(
       (g) => (this.progress.giftsInventory[g.id] ?? 0) > 0
@@ -457,22 +485,36 @@ export class VisualNovelRelationshipEngine {
         textColor: charId === 'kaede_lit' ? 'cyan' : 'white',
         choices: [
           {
+            id: 'sweet_talk',
+            label: 'NGOBROL HANGAT (+8%)',
+            highlighted: true,
+            affectionDelta: 8,
+            targetCharId: char.id,
+            nextNodeId: `route_${char.id}_talk`,
+          },
+          {
+            id: 'tease_surprise',
+            label: 'KEJUTAN SPONTAN (+5%)',
+            affectionDelta: 5,
+            targetCharId: char.id,
+            nextNodeId: `route_${char.id}_surprised`,
+          },
+          {
+            id: 'busy_excuse',
+            label: 'PAMIT SEBENTAR (-2%)',
+            affectionDelta: -2,
+            targetCharId: char.id,
+            nextNodeId: `route_${char.id}_sad`,
+          },
+          {
             id: 'chat_quiz',
             label: 'CHAT QUIZ',
-            highlighted: true,
             launchMiniGame: { mode: 'chat_quiz', charId: char.id },
           },
           {
             id: 'cafe_memory',
             label: 'CAFE MEMORY',
             launchMiniGame: { mode: 'cafe_memory', charId: char.id },
-          },
-          {
-            id: 'sweet_talk',
-            label: 'NGOBROL HANGAT (+8%)',
-            affectionDelta: 8,
-            targetCharId: char.id,
-            nextNodeId: `route_${char.id}_talk`,
           },
           ...giftChoices.slice(0, 2),
           ...(aff >= 100
@@ -493,18 +535,34 @@ export class VisualNovelRelationshipEngine {
         speakerId: char.id,
         speakerName: char.name,
         roomId: effectiveRoom,
-        sprites: sprites.map((s) => ({ ...s, expression: 'senyum' })),
+        sprites: sprites.map((s) => ({ ...s, expression: 'happy' })),
         text: `Obrolan bersamamu selalu membuat waktu terasa cepat berlalu, {playerName}. (+8% Afeksi · Total ${Math.min(
           100,
           aff + 8
         )}%)`,
+      },
+      [`route_${char.id}_surprised`]: {
+        id: `route_${char.id}_surprised`,
+        speakerId: char.id,
+        speakerName: char.name,
+        roomId: effectiveRoom,
+        sprites: sprites.map((s) => ({ ...s, expression: 'surprised' })),
+        text: `Eh?! Kamu serius baru saja bilang begitu, {playerName}? Aku sampai kaget mendengarnya! (+5% Afeksi)`,
+      },
+      [`route_${char.id}_sad`]: {
+        id: `route_${char.id}_sad`,
+        speakerId: char.id,
+        speakerName: char.name,
+        roomId: effectiveRoom,
+        sprites: sprites.map((s) => ({ ...s, expression: 'sad' })),
+        text: `Oh... kamu sedang sibuk ya, {playerName}? Baiklah, jangan lupa luangkan waktu nanti ya.`,
       },
       [`route_${char.id}_after_gift`]: {
         id: `route_${char.id}_after_gift`,
         speakerId: char.id,
         speakerName: char.name,
         roomId: effectiveRoom,
-        sprites: sprites.map((s) => ({ ...s, expression: 'senyum' })),
+        sprites: sprites.map((s) => ({ ...s, expression: 'happy' })),
         text: `Terima kasih atas hadiahnya, {playerName}! Aku akan menyimpannya baik-baik.`,
       },
     };
@@ -589,18 +647,87 @@ export class VisualNovelRelationshipEngine {
     this.emit();
   }
 
+  protected recordInteraction(
+    characterId: RomanceCharacterId,
+    slotKey: TimeSlotKey,
+    actionLabel: string,
+    affectionDelta: number,
+    resultingAffection: number,
+    journalMeta?: {
+      entryType?: InteractionHistoryEntry['entryType'];
+      dialoguePrompt?: string;
+      choiceLabel?: string;
+      roomId?: string;
+      branchFlag?: string;
+    }
+  ): void {
+    const charDef = ROMANCE_CHARACTERS.find((c) => c.id === characterId);
+    const entry: InteractionHistoryEntry = {
+      id: `hist_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      dayCount: this.progress.dayCount,
+      dayLabel: this.getDayLabel(),
+      slotKey,
+      characterId,
+      characterName: charDef?.name ?? characterId,
+      actionLabel,
+      affectionDelta,
+      resultingAffection,
+      timestamp: new Date().toLocaleTimeString('id-ID', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }),
+      ...journalMeta,
+    };
+    this.progress = {
+      ...this.progress,
+      interactionHistory: [entry, ...this.progress.interactionHistory].slice(0, 60),
+    };
+  }
+
   public adjustAffection(
     charId: RomanceCharacterId,
     delta: number,
     slotKey: TimeSlotKey,
-    activeRoomId: string
+    activeRoomId: string,
+    actionLabel = 'Dialog Percabangan',
+    journalMeta?: {
+      entryType?: InteractionHistoryEntry['entryType'];
+      dialoguePrompt?: string;
+      choiceLabel?: string;
+      roomId?: string;
+      branchFlag?: string;
+    }
   ): number {
     const prev = this.progress.affectionMap[charId] ?? 0;
     const nextVal = Math.max(0, Math.min(100, prev + delta));
+    const charDef = ROMANCE_CHARACTERS.find((c) => c.id === charId);
+    const inferredEmotion: EmotionKey =
+      delta >= 8
+        ? 'happy'
+        : delta > 0
+          ? 'surprised'
+          : delta <= -4
+            ? 'angry'
+            : delta < 0
+              ? 'sad'
+              : 'neutral';
+    this.lastChoiceFeedback = {
+      charId,
+      charName: charDef?.name ?? charId,
+      delta,
+      emotion: normalizeEmotionKey(inferredEmotion),
+      timestamp: Date.now(),
+    };
     this.progress = {
       ...this.progress,
       affectionMap: { ...this.progress.affectionMap, [charId]: nextVal },
     };
+    this.recordInteraction(charId, slotKey, actionLabel, delta, nextVal, {
+      entryType: 'dialogue_choice',
+      roomId: activeRoomId,
+      ...journalMeta,
+    });
     saveRomanceProgressDao(this.progress);
     this.evaluateAffectionEvents(slotKey, activeRoomId);
     this.emit();
@@ -638,6 +765,18 @@ export class VisualNovelRelationshipEngine {
       },
       completedDateQuests: nextQuests,
     };
+    this.recordInteraction(
+      charId,
+      slotKey,
+      `Hadiah: ${giftDef.name}${isFav ? ' (Favorit)' : ''}`,
+      gain,
+      nextAff,
+      {
+        entryType: 'gift',
+        choiceLabel: `Berikan ${giftDef.name}`,
+        roomId: activeRoomId,
+      }
+    );
     saveRomanceProgressDao(this.progress);
     this.callbacks.onToast?.(
       isFav ? `Hadiah Favorit ${charDef.name}!` : `Hadiah untuk ${charDef.name}`,
@@ -668,6 +807,18 @@ export class VisualNovelRelationshipEngine {
       affectionMap: { ...this.progress.affectionMap, [result.characterId]: nextAff },
       completedDateQuests: nextQuests,
     };
+    this.recordInteraction(
+      result.characterId,
+      slotKey,
+      result.mode === 'cafe_memory' ? 'Mini-Game: Cafe Memory' : 'Mini-Game: Chat Quiz',
+      result.affectionGain,
+      nextAff,
+      {
+        entryType: 'minigame',
+        choiceLabel: result.summaryText,
+        roomId: activeRoomId,
+      }
+    );
     saveRomanceProgressDao(this.progress);
     this.callbacks.onToast?.(
       result.mode === 'cafe_memory' ? 'Cafe Memory Selesai' : 'Chat Quiz Selesai',
@@ -700,44 +851,8 @@ export class VisualNovelRelationshipEngine {
         saveRomanceProgressDao(this.progress);
 
         // Build playable VN dialogue scene for the triggered Affection Event
-        const firstLine = evt.lines[0];
-        if (firstLine && !this.activeNodeId) {
-          const graph: Record<string, VnDialogueNode> = {};
-          evt.lines.forEach((ln, idx) => {
-            const id = idx === 0 ? `${evt.id}_0` : `${evt.id}_${idx}`;
-            graph[id] = {
-              ...ln,
-              id,
-              roomId: evt.roomId,
-              nextNodeId: idx + 1 < evt.lines.length ? `${evt.id}_${idx + 1}` : undefined,
-            };
-          });
-          if (evt.id === 'evt_kaede_50_afternoon') {
-            graph.evt_kaede_50_recall = {
-              id: 'evt_kaede_50_recall',
-              speakerId: 'kaede_lit',
-              speakerName: 'Kaede',
-              roomId: evt.roomId,
-              sprites: [
-                { characterId: 'kaede_lit', expression: 'senyum', position: 'left' },
-                { characterId: 'yuna_pixel', expression: 'senyum', position: 'right' },
-              ],
-              text: 'Luar biasa, {playerName}! Banyak yang cuma pura-pura tahu, tapi kamu benar-benar mengingatnya.',
-            };
-            graph.evt_kaede_50_lie = {
-              id: 'evt_kaede_50_lie',
-              speakerId: 'yuna_pixel',
-              speakerName: 'Yuna',
-              roomId: evt.roomId,
-              sprites: [
-                { characterId: 'kaede_lit', expression: 'waspada', position: 'left' },
-                { characterId: 'yuna_pixel', expression: 'senyum', position: 'right' },
-              ],
-              text: 'Haha, Kaede langsung tahu kalau kamu menebak! Yuk tebus dengan bermain Cafe Memory nanti.',
-            };
-          }
-          this.dialogueGraph = graph;
-          this.activeNodeId = `${evt.id}_0`;
+        if (evt.lines[0] && !this.activeNodeId) {
+          this.buildEventScene(evt);
         }
 
         this.callbacks.onAffectionEventTriggered?.(evt);
@@ -749,7 +864,92 @@ export class VisualNovelRelationshipEngine {
     return null;
   }
 
-  private emit(): void {
-    this.callbacks.onSnapshot?.(this.getSnapshot());
+  public replayAffectionEvent(eventId: string): boolean {
+    const evt = AFFECTION_EVENTS.find((e) => e.id === eventId);
+    if (!evt) return false;
+    this.buildEventScene(evt);
+    this.emit();
+    return true;
+  }
+
+  protected buildEventScene(evt: AffectionEventDef): void {
+    const firstLine = evt.lines[0];
+    if (!firstLine) return;
+    const graph: Record<string, VnDialogueNode> = {};
+    evt.lines.forEach((ln, idx) => {
+      const id = idx === 0 ? `${evt.id}_0` : `${evt.id}_${idx}`;
+      graph[id] = {
+        ...ln,
+        id,
+        roomId: evt.roomId,
+        nextNodeId: idx + 1 < evt.lines.length ? `${evt.id}_${idx + 1}` : undefined,
+      };
+    });
+    if (evt.id === 'evt_kaede_50_afternoon') {
+      graph.evt_kaede_50_recall = {
+        id: 'evt_kaede_50_recall',
+        speakerId: 'kaede_lit',
+        speakerName: 'Kaede',
+        roomId: evt.roomId,
+        sprites: [
+          { characterId: 'kaede_lit', expression: 'happy', position: 'left' },
+          { characterId: 'yuna_pixel', expression: 'surprised', position: 'right' },
+        ],
+        text: 'Luar biasa, {playerName}! Banyak yang cuma pura-pura tahu, tapi kamu benar-benar mengingatnya.',
+      };
+      graph.evt_kaede_50_lie = {
+        id: 'evt_kaede_50_lie',
+        speakerId: 'yuna_pixel',
+        speakerName: 'Yuna',
+        roomId: evt.roomId,
+        sprites: [
+          { characterId: 'kaede_lit', expression: 'sad', position: 'left' },
+          { characterId: 'yuna_pixel', expression: 'surprised', position: 'right' },
+        ],
+        text: 'Haha, Kaede langsung tahu kalau kamu menebak! Yuk tebus dengan bermain Cafe Memory nanti.',
+      };
+    }
+    this.dialogueGraph = graph;
+    this.activeNodeId = `${evt.id}_0`;
+  }
+
+  public exportBranchingSaveJson(): string {
+    return JSON.stringify(
+      {
+        format: 'flame_pixel_vn_branch_save_v2',
+        exportedAt: new Date().toISOString(),
+        progress: this.getProgress(),
+      },
+      null,
+      2
+    );
+  }
+
+  public importBranchingSaveJson(rawText: string): { ok: boolean; error?: string } {
+    try {
+      const parsed = JSON.parse(rawText) as { progress?: Partial<RomanceProgressDao> } & Partial<RomanceProgressDao>;
+      const candidate = parsed.progress && typeof parsed.progress === 'object' ? parsed.progress : parsed;
+      if (!candidate || typeof candidate !== 'object' || !candidate.affectionMap) {
+        return { ok: false, error: 'Struktur JSON Save tidak memiliki data afeksi yang valid.' };
+      }
+      const normalized = normalizeRomanceProgressDao(candidate);
+      this.progress = normalized;
+      saveRomanceProgressDao(normalized);
+      this.callbacks.onToast?.(
+        'Save Cerita Dimuat',
+        `Progres ${normalized.playerName} (Hari #${normalized.dayCount}) berhasil diimpor.`,
+        'success'
+      );
+      this.emit();
+      return { ok: true };
+    } catch {
+      return { ok: false, error: 'Berkas JSON tidak dapat dibaca atau format rusak.' };
+    }
+  }
+
+  protected emit(): void {
+    const snap = this.getSnapshot();
+    this.callbacks.onSnapshot?.(snap);
+    this.snapshotListeners.forEach((fn) => fn(snap));
   }
 }

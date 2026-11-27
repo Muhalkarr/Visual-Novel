@@ -1,21 +1,28 @@
-import React from 'react';
-import { RomanceCharacterId } from '../types/studioGameSchema';
-import { ShaderMode } from '../types/studioGameSchema';
+import React, { useState } from 'react';
+import { RomanceCharacterId, ShaderMode } from '../types/studioGameSchema';
+import {
+  EmotionAlias,
+  normalizeEmotionKey,
+  resolvePortraitAssetUrl,
+} from '../engine/VisualNovelPortraitManager';
 import { TimeSlotKey } from '../engine/VisualNovelRelationshipEngine';
 
 interface PixelCharacterSpriteProps {
   characterId: RomanceCharacterId;
-  expression?: 'netral' | 'senyum' | 'waspada' | 'panik';
+  expression?: EmotionAlias;
   className?: string;
 }
 
 export const PixelCharacterSprite: React.FC<PixelCharacterSpriteProps> = ({
   characterId,
-  expression = 'netral',
+  expression = 'neutral',
   className = '',
 }) => {
-  const isSmiling = expression === 'senyum';
-  const isAlert = expression === 'waspada' || expression === 'panik';
+  const emotion = normalizeEmotionKey(expression);
+  const isSmiling = emotion === 'happy';
+  const isSad = emotion === 'sad';
+  const isSurprised = emotion === 'surprised';
+  const isAlert = emotion === 'angry';
 
   const renderCharacter = () => {
     switch (characterId) {
@@ -45,23 +52,36 @@ export const PixelCharacterSprite: React.FC<PixelCharacterSpriteProps> = ({
               </>
             )}
             {/* Golden Eyes */}
-            <rect x="23" y="28" width="6" height="6" fill="#ffffff" />
-            <rect x="35" y="28" width="6" height="6" fill="#ffffff" />
+            <rect x="23" y={isSurprised ? '27' : '28'} width="6" height={isSurprised ? '7' : '6'} fill="#ffffff" />
+            <rect x="35" y={isSurprised ? '27' : '28'} width="6" height={isSurprised ? '7' : '6'} fill="#ffffff" />
             <rect x="24" y="29" width="4" height="5" fill="#ca8a04" />
             <rect x="36" y="29" width="4" height="5" fill="#ca8a04" />
             <rect x="25" y="30" width="2" height="2" fill="#451a03" />
             <rect x="37" y="30" width="2" height="2" fill="#451a03" />
             <rect x="24" y="29" width="1" height="1" fill="#ffffff" />
             <rect x="36" y="29" width="1" height="1" fill="#ffffff" />
+            {isSad && (
+              <>
+                <rect x="23" y="33" width="2" height="2" fill="#7dd3fc" />
+                <rect x="39" y="33" width="2" height="2" fill="#7dd3fc" />
+              </>
+            )}
             {/* Brows */}
-            <rect x="23" y={isAlert ? '25' : '27'} width="6" height="1" fill="#7f1d1d" />
-            <rect x="35" y={isAlert ? '25' : '27'} width="6" height="1" fill="#7f1d1d" />
+            <rect x="23" y={isSurprised ? '24' : isAlert ? '25' : '27'} width="6" height="1" fill="#7f1d1d" />
+            <rect x="35" y={isSurprised ? '24' : isAlert ? '25' : '27'} width="6" height="1" fill="#7f1d1d" />
             {/* Mouth */}
             {isSmiling ? (
               <>
                 <rect x="29" y="38" width="6" height="2" fill="#e11d48" />
                 <rect x="30" y="39" width="4" height="1" fill="#fecdd3" />
               </>
+            ) : isSurprised ? (
+              <>
+                <rect x="30" y="37" width="4" height="4" fill="#be123c" />
+                <rect x="31" y="38" width="2" height="2" fill="#fda4af" />
+              </>
+            ) : isSad ? (
+              <rect x="29" y="39" width="6" height="1" fill="#9f1239" />
             ) : (
               <rect x="30" y="38" width="4" height="1" fill="#b45349" />
             )}
@@ -245,6 +265,49 @@ export const PixelCharacterSprite: React.FC<PixelCharacterSpriteProps> = ({
     >
       {renderCharacter()}
     </svg>
+  );
+};
+
+interface ManagedPixelPortraitProps {
+  characterId: RomanceCharacterId;
+  expression?: EmotionAlias;
+  assetUrl?: string;
+  alt?: string;
+  className?: string;
+}
+
+export const ManagedPixelPortrait: React.FC<ManagedPixelPortraitProps> = ({
+  characterId,
+  expression = 'neutral',
+  assetUrl,
+  alt,
+  className = '',
+}) => {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const resolvedUrl = assetUrl || resolvePortraitAssetUrl(characterId, expression);
+
+  if (failedUrl === resolvedUrl) {
+    return (
+      <PixelCharacterSprite
+        characterId={characterId}
+        expression={expression}
+        className={className}
+      />
+    );
+  }
+
+  return (
+    <img
+      src={resolvedUrl}
+      alt={alt ?? `${characterId} ${normalizeEmotionKey(expression)} portrait`}
+      referrerPolicy="no-referrer"
+      onError={() => setFailedUrl(resolvedUrl)}
+      className={`pixelated select-none object-contain ${className}`}
+      style={{
+        filter:
+          'drop-shadow(2px 0 0 #ffffff) drop-shadow(-2px 0 0 #ffffff) drop-shadow(0 -2px 0 #ffffff)',
+      }}
+    />
   );
 };
 

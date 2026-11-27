@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
+  AlertTriangle,
   Award,
   Calendar,
   Camera,
@@ -16,6 +17,7 @@ import {
   Footprints,
   Gift,
   Heart,
+  Home,
   Image as ImageIcon,
   KeyRound,
   Lock,
@@ -60,12 +62,23 @@ import {
   SandboxDebugState,
 } from '../engine/GameEngine';
 import { MiniGameMode, MiniGameResult } from '../engine/MiniGameModule';
+import { DialogueBranchManager } from '../engine/DialogueBranchManager';
+import { RetroAudioController } from '../engine/RetroAudioController';
+import { VisualNovelPortraitManager } from '../engine/VisualNovelPortraitManager';
 import {
   RelationshipSnapshot,
-  VisualNovelRelationshipEngine,
 } from '../engine/VisualNovelRelationshipEngine';
+import { CGMemoryGallery } from './CGMemoryGallery';
+import { MemoryGallery } from './MemoryGallery';
 import { MiniGameOverlay } from './MiniGameOverlay';
+import { WeekendCalendarModal } from './PixelExpansionModals';
 import { PixelVnStage } from './PixelVnStage';
+import { RelationshipDashboard } from './RelationshipDashboard';
+import { RelationshipHistoryLog } from './RelationshipHistoryLog';
+import { RecCampusLifeHubModal } from './RecCampusLifeHubModal';
+import { RecNightCameraHubModal } from './RecNightCameraHubModal';
+import { WebChiptuneEngine } from './WebChiptuneEngine';
+import { applyExtendRentGrace, applyPayRent } from '../engine/RecLifeCycleManager';
 import { CapturedReplaySession } from '../types/replaySession';
 import {
   AgentProgressionDao,
@@ -76,6 +89,7 @@ import {
   ROMANCE_GIFTS,
   RomanceCharacterDef,
   RomanceCharacterId,
+  RomanceProgressDao,
   SaveDaoSchema,
   SpeedrunRecord,
   StudioModulePrefs,
@@ -223,6 +237,14 @@ export const FullStealthGame: React.FC<FullStealthGameProps> = ({
   } | null>(null);
   const [pixelVnMode, setPixelVnMode] = useState<boolean>(true);
   const [show2dDebugDrawer, setShow2dDebugDrawer] = useState<boolean>(false);
+  const [showRelationshipDashboard, setShowRelationshipDashboard] = useState<boolean>(false);
+  const [showHistoryLog, setShowHistoryLog] = useState<boolean>(false);
+  const [showWeekendCalendar, setShowWeekendCalendar] = useState<boolean>(false);
+  const [showCgMemoryGallery, setShowCgMemoryGallery] = useState<boolean>(false);
+  const [showChiptuneMixer, setShowChiptuneMixer] = useState<boolean>(false);
+  const [showCampusLifeHub, setShowCampusLifeHub] = useState<boolean>(false);
+  const [showNightCameraHub, setShowNightCameraHub] = useState<boolean>(false);
+  const [showRentDueModal, setShowRentDueModal] = useState<boolean>(false);
   const [endingChar, setEndingChar] = useState<RomanceCharacterDef | null>(null);
 
   // Analog Joystick UI
@@ -235,7 +257,9 @@ export const FullStealthGame: React.FC<FullStealthGameProps> = ({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fileImportRef = useRef<HTMLInputElement | null>(null);
   const engineRef = useRef<GameEngine | null>(null);
-  const relEngineRef = useRef<VisualNovelRelationshipEngine | null>(null);
+  const relEngineRef = useRef<DialogueBranchManager | null>(null);
+  const portraitManagerRef = useRef<VisualNovelPortraitManager | null>(null);
+  const audioControllerRef = useRef<RetroAudioController | null>(null);
   const snapshotRef = useRef<EngineSnapshot | null>(null);
 
   const pushToast = useCallback(
@@ -264,7 +288,7 @@ export const FullStealthGame: React.FC<FullStealthGameProps> = ({
     [pushToast]
   );
 
-  // Initialize Unified Pure-TS GameEngine & VisualNovelRelationshipEngine Once
+  // Initialize Unified Pure-TS GameEngine, VisualNovelRelationshipEngine & PortraitManager Once
   if (!engineRef.current) {
     engineRef.current = new GameEngine({
       worldSchema,
@@ -288,7 +312,18 @@ export const FullStealthGame: React.FC<FullStealthGameProps> = ({
     });
   }
   if (!relEngineRef.current) {
-    relEngineRef.current = new VisualNovelRelationshipEngine();
+    relEngineRef.current = new DialogueBranchManager();
+  }
+  if (!portraitManagerRef.current) {
+    portraitManagerRef.current = new VisualNovelPortraitManager(true);
+  }
+  if (!audioControllerRef.current) {
+    audioControllerRef.current = new RetroAudioController();
+    audioControllerRef.current.setStudioAudioConfig({
+      muted: studioPrefs.muted,
+      masterVolume: studioPrefs.masterVolume,
+      sfxVolume: studioPrefs.sfxVolume,
+    });
   }
 
   const [snapshot, setSnapshot] = useState<EngineSnapshot>(() =>
@@ -520,6 +555,8 @@ export const FullStealthGame: React.FC<FullStealthGameProps> = ({
         engine.updateRomanceProgress(relSnap.progress);
       },
       onAffectionEventTriggered: (evt) => {
+        audioControllerRef.current?.triggerEventThemeCrossfade();
+        audioControllerRef.current?.playEventFanfare();
         pushToast(evt.title, `Event Afeksi 24 Jam terbuka (+¢${evt.coinReward})!`, 'success');
         if (evt.roomId) engine.navigateToRoom(evt.roomId);
       },
@@ -548,6 +585,7 @@ export const FullStealthGame: React.FC<FullStealthGameProps> = ({
 
     return () => {
       engine.destroy();
+      audioControllerRef.current?.destroy();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -600,6 +638,15 @@ export const FullStealthGame: React.FC<FullStealthGameProps> = ({
         showStudioModal ||
         showSafeHouse ||
         showGiftShop ||
+        showGalleryModal ||
+        showCgMemoryGallery ||
+        showChiptuneMixer ||
+        showCampusLifeHub ||
+        showNightCameraHub ||
+        showRentDueModal ||
+        showRelationshipDashboard ||
+        showHistoryLog ||
+        showWeekendCalendar ||
         Boolean(dateMiniGameCharId) ||
         Boolean(activeMiniGame) ||
         Boolean(endingChar);
@@ -635,14 +682,24 @@ export const FullStealthGame: React.FC<FullStealthGameProps> = ({
       window.removeEventListener('keyup', onKeyUp);
     };
   }, [
+    activeMiniGame,
     dateMiniGameCharId,
     dialogueNode,
     endingChar,
     hackMiniGameOpen,
     lockpickDoor,
+    showCampusLifeHub,
+    showCgMemoryGallery,
+    showChiptuneMixer,
+    showGalleryModal,
     showGiftShop,
+    showHistoryLog,
+    showNightCameraHub,
+    showRelationshipDashboard,
+    showRentDueModal,
     showSafeHouse,
     showStudioModal,
+    showWeekendCalendar,
   ]);
 
   // Real-time Auto-Save Preferences to SaveDAO
@@ -650,12 +707,22 @@ export const FullStealthGame: React.FC<FullStealthGameProps> = ({
     const saved = saveStudioModulePrefs(next);
     setStudioPrefs(saved);
     engineRef.current?.updateModuleSettings(saved);
+    audioControllerRef.current?.setStudioAudioConfig({
+      muted: saved.muted,
+      masterVolume: saved.masterVolume,
+      sfxVolume: saved.sfxVolume,
+    });
   };
 
   const handleResetStudioPrefs = () => {
     const reset = resetStudioModulePrefs();
     setStudioPrefs(reset);
     engineRef.current?.updateModuleSettings(reset);
+    audioControllerRef.current?.setStudioAudioConfig({
+      muted: reset.muted,
+      masterVolume: reset.masterVolume,
+      sfxVolume: reset.sfxVolume,
+    });
     pushToast('SaveDAO Reset', 'Preferensi Modul Studio dikembalikan ke default.', 'info');
   };
 
@@ -864,13 +931,46 @@ export const FullStealthGame: React.FC<FullStealthGameProps> = ({
     }
   };
 
+  const handleSyncRecProgress = useCallback((nextProgress: RomanceProgressDao) => {
+    if (relEngineRef.current) {
+      relEngineRef.current.syncExternalProgress(nextProgress);
+    } else {
+      engineRef.current?.updateRomanceProgress(nextProgress);
+    }
+  }, []);
+
+  const handleLaunchNightCameraMission = useCallback(
+    (roomId: string, contractTitle: string) => {
+      setShowNightCameraHub(false);
+      setPixelVnMode(false);
+      const targetMode: MissionMode =
+        roomId === 'campus_observatory' ? 'chapter_2' : 'chapter_1';
+      engineRef.current?.startMission({
+        mode: targetMode,
+        studioSchema: worldSchema,
+        withCutscene: false,
+      });
+      if (roomId !== 'campus_observatory') {
+        engineRef.current?.navigateToRoom(roomId);
+      }
+      pushToast(
+        `Misi Kamera Malam: ${contractTitle}`,
+        'Gunakan [Space] Foto DSLR saat mendekati target atau bukti dokumen!',
+        'info'
+      );
+    },
+    [pushToast, worldSchema]
+  );
+
   return (
     <div className="space-y-4">
       {/* Primary Full-Screen Pixel Visual Novel Stage */}
-      {pixelVnMode && relEngineRef.current && (
+      {pixelVnMode && relEngineRef.current && portraitManagerRef.current && (
         <PixelVnStage
           relEngine={relEngineRef.current}
           relSnapshot={relSnapshot}
+          portraitManager={portraitManagerRef.current}
+          audioController={audioControllerRef.current ?? undefined}
           activeRoomId={snapshot.activeRoomId}
           slotKey={snapshot.scheduleSlotKey}
           studioPrefs={studioPrefs}
@@ -881,8 +981,15 @@ export const FullStealthGame: React.FC<FullStealthGameProps> = ({
             engineRef.current?.setPhase('MINI_GAME');
             setActiveMiniGame({ mode, charId });
           }}
+          onOpenRelationshipDashboard={() => setShowRelationshipDashboard(true)}
+          onOpenHistoryLog={() => setShowHistoryLog(true)}
+          onOpenWeekendCalendar={() => setShowWeekendCalendar(true)}
           onOpenGiftShop={() => setShowGiftShop(true)}
           onOpenGallery={() => setShowGalleryModal(true)}
+          onOpenCgMemoryGallery={() => setShowCgMemoryGallery(true)}
+          onOpenChiptuneMixer={() => setShowChiptuneMixer(true)}
+          onOpenCampusLifeHub={() => setShowCampusLifeHub(true)}
+          onOpenNightCameraHub={() => setShowNightCameraHub(true)}
           onOpenStudioSettings={() => setShowStudioModal(true)}
           onToggle2dDebugDrawer={() => setShow2dDebugDrawer((v) => !v)}
           onSwitchToStealth={() => {
@@ -892,7 +999,11 @@ export const FullStealthGame: React.FC<FullStealthGameProps> = ({
           onRestNextDay={() => {
             engineRef.current?.restAtCafeOrNextDay();
             if (engineRef.current) {
-              relEngineRef.current?.syncExternalProgress(engineRef.current.getSnapshot().romanceProgress);
+              const nextProg = engineRef.current.getSnapshot().romanceProgress;
+              relEngineRef.current?.syncExternalProgress(nextProg);
+              if (nextProg.rentState?.overdue) {
+                setShowRentDueModal(true);
+              }
             }
           }}
           onSnapMemoryPhoto={() => engineRef.current?.triggerPhoto()}
@@ -960,6 +1071,22 @@ export const FullStealthGame: React.FC<FullStealthGameProps> = ({
               Toko Hadiah
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => setShowCampusLifeHub(true)}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/35 hover:bg-amber-500/25 text-xs font-medium text-amber-200 whitespace-nowrap shrink-0"
+          >
+            <Home className="w-3.5 h-3.5" />
+            Kampus &amp; Sewa
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowNightCameraHub(true)}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-sky-500/15 border border-sky-500/35 hover:bg-sky-500/25 text-xs font-medium text-sky-200 whitespace-nowrap shrink-0"
+          >
+            <Camera className="w-3.5 h-3.5" />
+            REC Kamera ({relSnapshot.progress.capturedMediaQueue.filter((m) => !m.uploaded).length})
+          </button>
           <button
             type="button"
             onClick={() => setShowSafeHouse(true)}
@@ -1998,6 +2125,10 @@ export const FullStealthGame: React.FC<FullStealthGameProps> = ({
       <DoorLockpickMiniGame
         isOpen={Boolean(lockpickDoor)}
         doorLabel={lockpickDoor?.label ?? 'Pintu Sekuriti'}
+        lockpickSkillLevel={
+          (relSnapshot.progress.stealthSkills?.lockpickMastery ?? 0) +
+          Math.floor((relSnapshot.progress.studentStats?.dexterity ?? 16) / 25)
+        }
         locale={studioPrefs.locale}
         onUnlock={() => {
           if (lockpickDoor) engineRef.current?.unlockDoorByLockpick(lockpickDoor.id);
@@ -2062,56 +2193,175 @@ export const FullStealthGame: React.FC<FullStealthGameProps> = ({
         }}
       />
 
-      {/* CG Gallery Modal */}
-      {showGalleryModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
-          <div className="w-full max-w-2xl bg-[#121722] border border-[#243048] rounded-2xl p-5 space-y-4">
-            <div className="flex items-center justify-between border-b border-[#1e2638] pb-3">
-              <div className="flex items-center gap-2">
-                <ImageIcon className="w-4 h-4 text-purple-400" />
-                <h4 className="text-sm font-bold text-white">
-                  Galeri Foto Bukti CG ({photoGallery.length})
-                </h4>
+      {/* Relationship Dashboard Drawer */}
+      {relEngineRef.current && (
+        <RelationshipDashboard
+          isOpen={showRelationshipDashboard}
+          relEngine={relEngineRef.current}
+          relSnapshot={relSnapshot}
+          slotKey={snapshot.scheduleSlotKey}
+          sfxManager={audioControllerRef.current?.sfx}
+          onSelectCharacterTalk={(charId, roomId) => {
+            setPixelVnMode(true);
+            engineRef.current?.navigateToRoom(roomId);
+            relEngineRef.current?.startCharacterRoute(charId, snapshot.scheduleSlotKey, roomId);
+          }}
+          onClose={() => setShowRelationshipDashboard(false)}
+        />
+      )}
+
+      {/* Weekend Calendar & Special Date Missions Modal */}
+      {relEngineRef.current && (
+        <WeekendCalendarModal
+          isOpen={showWeekendCalendar}
+          branchManager={relEngineRef.current}
+          dayCount={relSnapshot.progress.dayCount}
+          activeRoomId={snapshot.activeRoomId}
+          onNavigateRoom={(roomId) => {
+            setPixelVnMode(true);
+            engineRef.current?.navigateToRoom(roomId);
+          }}
+          onClose={() => setShowWeekendCalendar(false)}
+        />
+      )}
+
+      {/* RelationshipHistoryLog Journal Modal */}
+      <RelationshipHistoryLog
+        isOpen={showHistoryLog}
+        progress={relSnapshot.progress}
+        sfxManager={audioControllerRef.current?.sfx}
+        onClose={() => setShowHistoryLog(false)}
+      />
+
+      {/* MemoryGallery Modal (localStorage Event CGs + RelationshipHistoryLog) */}
+      <MemoryGallery
+        isOpen={showGalleryModal}
+        progress={relSnapshot.progress}
+        photos={photoGallery}
+        audioController={audioControllerRef.current ?? undefined}
+        sfxManager={audioControllerRef.current?.sfx}
+        onViewEndingCg={(ch) => {
+          setShowGalleryModal(false);
+          setEndingChar(ch);
+        }}
+        onReplayAffectionEvent={(evtId, roomId) => {
+          setShowGalleryModal(false);
+          setPixelVnMode(true);
+          engineRef.current?.navigateToRoom(roomId);
+          relEngineRef.current?.replayAffectionEvent(evtId);
+        }}
+        onClose={() => setShowGalleryModal(false)}
+      />
+
+      {/* CGMemoryGallery Modal (Responsive CG Grid linked to StorySaveManager Narrative Achievements) */}
+      <CGMemoryGallery
+        isOpen={showCgMemoryGallery}
+        progress={relSnapshot.progress}
+        sfxManager={audioControllerRef.current?.sfx}
+        onViewEndingCg={(ch) => {
+          setShowCgMemoryGallery(false);
+          setEndingChar(ch);
+        }}
+        onClose={() => setShowCgMemoryGallery(false)}
+      />
+
+      {/* WebChiptuneEngine Audio Channel Mixer Modal */}
+      {audioControllerRef.current && (
+        <WebChiptuneEngine
+          audioController={audioControllerRef.current}
+          isOpen={showChiptuneMixer}
+          onClose={() => setShowChiptuneMixer(false)}
+        />
+      )}
+
+      {/* REC Campus Life, Rent & Daily Shop Hub */}
+      <RecCampusLifeHubModal
+        isOpen={showCampusLifeHub}
+        progress={relSnapshot.progress}
+        slotKey={snapshot.scheduleSlotKey}
+        audioController={audioControllerRef.current ?? undefined}
+        onUpdateProgress={handleSyncRecProgress}
+        onToast={pushToast}
+        onClose={() => setShowCampusLifeHub(false)}
+      />
+
+      {/* REC Night Camera Missions, Upload Portal & Skill Tree Hub */}
+      <RecNightCameraHubModal
+        isOpen={showNightCameraHub}
+        progress={relSnapshot.progress}
+        slotKey={snapshot.scheduleSlotKey}
+        activeRoomId={snapshot.activeRoomId}
+        audioController={audioControllerRef.current ?? undefined}
+        onUpdateProgress={handleSyncRecProgress}
+        onLaunchNightMission={handleLaunchNightCameraMission}
+        onToast={pushToast}
+        onClose={() => setShowNightCameraHub(false)}
+      />
+
+      {/* Apartment Rent Due / Overdue Reminder Modal */}
+      {showRentDueModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="w-full max-w-md bg-[#121722] border-2 border-rose-500/70 p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-[#243048] pb-3">
+              <div className="flex items-center gap-2 text-rose-300 font-bold text-sm">
+                <AlertTriangle className="w-5 h-5" />
+                <span>Tenggat Uang Sewa Apartemen!</span>
               </div>
               <button
                 type="button"
-                onClick={() => setShowGalleryModal(false)}
+                onClick={() => setShowRentDueModal(false)}
                 className="p-1 text-slate-400 hover:text-white"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
-            {photoGallery.length === 0 ? (
-              <div className="py-10 text-center text-xs text-slate-400">
-                Belum ada foto terekam. Tekan [Space] di dekat Dokumen Bukti atau Satpam!
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-96 overflow-y-auto">
-                {photoGallery.map((ph) => (
-                  <div
-                    key={ph.id}
-                    className="bg-[#0c1018] border border-[#243048] rounded-xl overflow-hidden"
-                  >
-                    <img src={ph.dataUrl} alt={ph.caption} className="w-full h-36 object-cover" />
-                    <div className="p-2.5 flex items-center justify-between text-xs">
-                      <div>
-                        <div className="font-semibold text-slate-100">{ph.caption}</div>
-                        <div className="text-[11px] text-slate-400">
-                          {ph.roomName} · {ph.timestamp}
-                        </div>
-                      </div>
-                      <span
-                        className={`text-[10px] font-mono ${
-                          ph.validEvidence ? 'text-emerald-400' : 'text-sky-400'
-                        }`}
-                      >
-                        {ph.validEvidence ? 'VALID' : 'INTEL'}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Tagihan sewa Pekan #{relSnapshot.progress.rentState.weekNumber} sebesar{' '}
+              <span className="text-amber-300 font-bold">
+                ¢{relSnapshot.progress.rentState.rentAmount}
+              </span>{' '}
+              sudah jatuh tempo pada Hari #{relSnapshot.progress.rentState.dueDayCount}. Saldo saat ini:{' '}
+              <span className="text-emerald-300 font-bold">¢{relSnapshot.progress.allowanceCoins}</span>.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const res = applyPayRent(relSnapshot.progress);
+                  if (res.ok) {
+                    audioControllerRef.current?.playEventFanfare();
+                    handleSyncRecProgress(res.nextProgress);
+                    setShowRentDueModal(false);
+                  }
+                  pushToast(res.ok ? 'Sewa Lunas' : 'Koin Belum Cukup', res.message, res.ok ? 'success' : 'warning');
+                }}
+                className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold"
+              >
+                Bayar Sewa Sekarang (¢{relSnapshot.progress.rentState.rentAmount})
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const res = applyExtendRentGrace(relSnapshot.progress);
+                  handleSyncRecProgress(res.nextProgress);
+                  setShowRentDueModal(false);
+                  pushToast('Tenggat Diperpanjang', res.message, 'info');
+                }}
+                className="w-full py-2 bg-[#0c1018] border border-amber-500/50 text-amber-200 text-xs font-mono"
+              >
+                Minta Perpanjangan +2 Hari (-20⚡ Stamina)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRentDueModal(false);
+                  setShowCampusLifeHub(true);
+                }}
+                className="w-full py-2 bg-[#0c1018] border border-[#243048] text-slate-300 text-xs"
+              >
+                Cari Koin dulu di Kafe / Upload Video
+              </button>
+            </div>
           </div>
         </div>
       )}
